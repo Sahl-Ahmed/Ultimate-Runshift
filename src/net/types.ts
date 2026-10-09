@@ -10,6 +10,12 @@ export const BEAT_MS = 1000
 /** A player we have not heard from for this long is dropped. */
 export const TIMEOUT_MS = 5000
 
+/**
+ * Once everyone else is out, the last runner gets this long before the race
+ * is called. Without it the winner runs on alone while the others wait.
+ */
+export const LAST_RUNNER_MS = 3000
+
 export interface Profile {
   id: string
   name: string

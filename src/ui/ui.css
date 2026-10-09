@@ -544,6 +544,35 @@ kbd {
   white-space: nowrap;
 }
 
+.last-runner {
+  position: absolute;
+  left: 50%;
+  top: 92px;
+  transform: translateX(-50%);
+  padding: 10px 20px;
+  border-radius: 999px;
+  background: linear-gradient(92deg, rgba(255, 211, 77, 0.95), rgba(255, 180, 61, 0.95));
+  color: #20170a;
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+  animation: pulse 1s ease-in-out infinite;
+}
+
+/* When spectating, this banner sits below that one instead of on top of it. */
+.spectating + .last-runner {
+  top: 132px;
+}
+
+@keyframes pulse {
+  50% {
+    transform: translateX(-50%) scale(1.04);
+  }
+}
+
 /* ---------------------------------------------------------------- podium */
 .podium {
   display: grid;

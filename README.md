@@ -32,8 +32,10 @@ colour, and all five line up on a staggered marathon grid.
 - **The stagger is cosmetic.** Scoring is always each player's own distance, so
   starting further forward is no advantage.
 - **Crashing freezes your score** and switches you to spectating — the camera
-  follows whoever is still running. Results appear once everyone has crashed, and
-  the last player standing comes 1st.
+  follows whoever is still running.
+- **Once only one runner is left, the race is called after 3 seconds**, so the
+  winner is not left running alone while everyone waits. Everyone sees the
+  countdown, then the full 1st–5th placing.
 - A live leaderboard shows the running order during the race.
 - Someone who joins mid-race waits in the lobby for the next round.
 

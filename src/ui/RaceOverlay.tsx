@@ -60,6 +60,27 @@ export function SpectatingBanner() {
   return <div className="spectating">You crashed · spectating · your score is locked</div>
 }
 
+/**
+ * Shown to everyone once a single runner is left: the race is about to be
+ * called, so the winner is not left running alone.
+ */
+export function LastRunnerBanner({ endsAt, isLastRunner }: { endsAt: number; isLastRunner: boolean }) {
+  const [remaining, setRemaining] = useState(() => endsAt - Date.now())
+
+  useEffect(() => {
+    const timer = setInterval(() => setRemaining(endsAt - Date.now()), 100)
+    return () => clearInterval(timer)
+  }, [endsAt])
+
+  const seconds = Math.max(0, Math.ceil(remaining / 1000))
+
+  return (
+    <div className="last-runner">
+      {isLastRunner ? 'You are the last runner' : 'Last runner left'} · race ends in {seconds}
+    </div>
+  )
+}
+
 export function ResultsScreen({ snapshot, best }: { snapshot: RoomSnapshot; best: number }) {
   const standings = [...snapshot.players].sort((a, b) => scoreOf(b) - scoreOf(a))
   const self = standings.find((player) => player.isSelf)

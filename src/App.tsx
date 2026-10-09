@@ -10,6 +10,7 @@ import { MainMenu } from './ui/MainMenu'
 import {
   ConnectingScreen,
   Countdown,
+  LastRunnerBanner,
   Leaderboard,
   ResultsScreen,
   RoomErrorScreen,
@@ -43,6 +44,9 @@ export default function App() {
             <HUD snapshot={hud} />
             <Leaderboard snapshot={net} />
             {!game.alive && <SpectatingBanner />}
+            {net.finishEndsAt > 0 && (
+              <LastRunnerBanner endsAt={net.finishEndsAt} isLastRunner={game.alive} />
+            )}
           </>
         )}
         {net.status === 'results' && <ResultsScreen snapshot={net} best={hud.best} />}

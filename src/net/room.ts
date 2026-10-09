@@ -4,6 +4,7 @@ import { normalizeRoomCode, randomId, randomName, randomRoomCode } from './ident
 import { createLocalTransport, createOnlineTransport, isOnlineConfigured } from './transports'
 import {
   BEAT_MS,
+  LAST_RUNNER_MS,
   MAX_PLAYERS,
   STAGGER_SPACING,
   STATE_HZ,
@@ -32,6 +33,11 @@ export interface RoomSnapshot {
   countdownEndsAt: number
   /** Another round is already running, so this client waits for the next one. */
   raceInProgress: boolean
+  /**
+   * Timestamp the last-runner countdown ends at, or 0. Set on every client
+   * once only one runner is left, so they all show the same countdown.
+   */
+  finishEndsAt: number
 }
 
 /** Visual head start: slot 0 lines up furthest forward. */
@@ -53,6 +59,9 @@ class Room {
   private raceSeed = 0
   /** Last time a position update arrived while we were not racing. */
   private lastRemoteRaceSignal = 0
+  /** When the last-runner countdown ends (0 = not running). */
+  private finishEndsAt = 0
+  private finishTimer: number | null = null
 
   private beatTimer: number | null = null
   private pruneTimer: number | null = null
@@ -86,6 +95,7 @@ class Room {
       error: this.error,
       countdownEndsAt: this.countdownEndsAt,
       raceInProgress: Date.now() - this.lastRemoteRaceSignal < 3000,
+      finishEndsAt: this.finishEndsAt,
     }
   }
 
@@ -230,6 +240,7 @@ class Room {
     this.players.clear()
     this.code = ''
     this.countdownEndsAt = 0
+    this.clearFinishCountdown()
     for (const timer of [this.beatTimer, this.pruneTimer, this.emitTimer, this.netTimer, this.countdownTimer]) {
       if (timer !== null) clearInterval(timer)
     }
@@ -265,6 +276,7 @@ class Room {
       if (removed) {
         if (this.canReshuffle()) this.recomputeSlots()
         this.checkRaceOver()
+        this.checkLastRunner()
       }
       // Keep the lobby fresh (player count, host, "race in progress").
       if (removed || this.status === 'lobby') this.emit()
@@ -305,6 +317,7 @@ class Room {
         if (this.players.delete(message.id)) {
           if (this.canReshuffle()) this.recomputeSlots()
           this.checkRaceOver()
+          this.checkLastRunner()
           this.emit()
         }
         break
@@ -321,12 +334,21 @@ class Room {
         }
         const player = this.players.get(message.id)
         if (!player) break
+        const wasAlive = player.alive
         player.lastSeen = Date.now()
         player.distance = message.d
         player.x = message.x
         player.jumpY = message.y
-        player.alive = message.a === 1
+        // A player who already reported a final distance is out for good: a
+        // later position packet must never bring them back to life, or the
+        // race can never be called.
+        player.alive = player.finalDistance === null && message.a === 1
         this.markDirty()
+        // A position update can be the first sign that someone went out.
+        if (wasAlive && !player.alive) {
+          this.checkRaceOver()
+          this.checkLastRunner()
+        }
         break
       }
       case 'fin': {
@@ -337,6 +359,7 @@ class Room {
         player.distance = message.d
         player.finalDistance = message.d
         this.checkRaceOver()
+        this.checkLastRunner()
         this.emit()
         break
       }
@@ -382,6 +405,7 @@ class Room {
     if (this.status !== 'lobby') return
     this.raceSeed = seed
     this.lastRemoteRaceSignal = 0
+    this.clearFinishCountdown()
     this.status = 'countdown'
     this.countdownEndsAt = Date.now() + COUNTDOWN_MS
     for (const player of this.players.values()) {
@@ -424,6 +448,8 @@ class Room {
 
   /** Called once when the local player crashes. Their distance is now locked. */
   reportCrash(distance: number) {
+    // Keep the simulation and the roster in step, whichever side calls first.
+    game.alive = false
     const self = this.self()
     if (self) {
       self.alive = false
@@ -432,6 +458,7 @@ class Room {
     }
     this.send({ t: 'fin', id: this.selfId, d: distance })
     this.checkRaceOver()
+    this.checkLastRunner()
     this.emit()
   }
 
@@ -440,9 +467,51 @@ class Room {
     const players = this.livePlayers()
     if (players.length === 0) return
     if (players.some((player) => player.alive)) return
+    this.clearFinishCountdown()
     this.status = 'results'
     this.countdownEndsAt = 0
     endRun()
+  }
+
+  /**
+   * Once everyone else is out there is nothing left to race for, so the last
+   * runner gets a short grace period and then the race is called. Every client
+   * starts the same countdown for the display; only the survivor's own client
+   * actually ends the run, which keeps it on the existing crash path.
+   */
+  private checkLastRunner() {
+    if (this.status !== 'racing') {
+      this.clearFinishCountdown()
+      return
+    }
+
+    const players = this.livePlayers()
+    const alive = players.filter((player) => player.alive)
+
+    // A one-player room has nobody to wait for, so it never force-finishes.
+    if (players.length < 2 || alive.length !== 1) {
+      this.clearFinishCountdown()
+      return
+    }
+
+    if (this.finishEndsAt !== 0) return // already counting down
+    this.finishEndsAt = Date.now() + LAST_RUNNER_MS
+
+    if (alive[0].isSelf) {
+      this.finishTimer = window.setTimeout(() => {
+        this.finishTimer = null
+        if (this.status === 'racing' && game.alive) this.reportCrash(game.distance)
+      }, LAST_RUNNER_MS) as unknown as number
+    }
+    this.emit()
+  }
+
+  private clearFinishCountdown() {
+    if (this.finishTimer !== null) {
+      clearTimeout(this.finishTimer)
+      this.finishTimer = null
+    }
+    this.finishEndsAt = 0
   }
 
   /** Host only. */
@@ -455,6 +524,7 @@ class Room {
     if (this.status !== 'results' && this.status !== 'racing') return
     this.status = 'lobby'
     this.lastRemoteRaceSignal = 0
+    this.clearFinishCountdown()
     for (const player of this.players.values()) {
       player.distance = 0
       player.x = 0
