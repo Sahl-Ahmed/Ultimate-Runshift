@@ -1,0 +1,495 @@
+﻿import { randomSeed } from '../game/rng'
+import { endRun, game, startRun } from '../game/state'
+import { normalizeRoomCode, randomId, randomName, randomRoomCode } from './identity'
+import { createLocalTransport, createOnlineTransport, isOnlineConfigured } from './transports'
+import {
+  BEAT_MS,
+  MAX_PLAYERS,
+  STAGGER_SPACING,
+  STATE_HZ,
+  TIMEOUT_MS,
+  type NetMessage,
+  type RoomPlayer,
+  type Transport,
+  type TransportKind,
+} from './types'
+
+export type RoomStatus = 'idle' | 'connecting' | 'lobby' | 'countdown' | 'racing' | 'results' | 'error'
+
+const COUNTDOWN_MS = 3200
+/** Discovery window after sending hello, to collect replies before deciding. */
+const DISCOVERY_MS = 1300
+const EMIT_MS = 150
+
+export interface RoomSnapshot {
+  status: RoomStatus
+  code: string
+  kind: TransportKind
+  selfId: string
+  isHost: boolean
+  players: RoomPlayer[]
+  error: string | null
+  countdownEndsAt: number
+  /** Another round is already running, so this client waits for the next one. */
+  raceInProgress: boolean
+}
+
+/** Visual head start: slot 0 lines up furthest forward. */
+export function staggerForSlot(slot: number): number {
+  return (MAX_PLAYERS - 1 - slot) * STAGGER_SPACING
+}
+
+class Room {
+  private players = new Map<string, RoomPlayer>()
+  private transport: Transport | null = null
+  private status: RoomStatus = 'idle'
+  private code = ''
+  private kind: TransportKind = 'local'
+  private selfId = randomId()
+  private selfName = randomName()
+  private error: string | null = null
+  private countdownEndsAt = 0
+  /** Track seed for the current round, chosen by the host. */
+  private raceSeed = 0
+  /** Last time a position update arrived while we were not racing. */
+  private lastRemoteRaceSignal = 0
+
+  private beatTimer: number | null = null
+  private pruneTimer: number | null = null
+  private emitTimer: number | null = null
+  private netTimer: number | null = null
+  private countdownTimer: number | null = null
+
+  private listeners = new Set<() => void>()
+  private snapshot: RoomSnapshot = this.buildSnapshot()
+  private dirty = false
+
+  // ------------------------------------------------------------------ store
+  subscribe = (listener: () => void) => {
+    this.listeners.add(listener)
+    return () => {
+      this.listeners.delete(listener)
+    }
+  }
+
+  getSnapshot = (): RoomSnapshot => this.snapshot
+
+  private buildSnapshot(): RoomSnapshot {
+    const players = [...(this.players?.values() ?? [])].sort((a, b) => a.slot - b.slot)
+    return {
+      status: this.status,
+      code: this.code,
+      kind: this.kind,
+      selfId: this.selfId,
+      isHost: this.hostId() === this.selfId,
+      players,
+      error: this.error,
+      countdownEndsAt: this.countdownEndsAt,
+      raceInProgress: Date.now() - this.lastRemoteRaceSignal < 3000,
+    }
+  }
+
+  private emit() {
+    this.dirty = false
+    this.snapshot = this.buildSnapshot()
+    for (const listener of this.listeners) listener()
+  }
+
+  /** Position updates are frequent, so React is only nudged on a timer. */
+  private markDirty() {
+    this.dirty = true
+  }
+
+  // ----------------------------------------------------------------- getters
+  get isMultiplayer() {
+    return this.status === 'countdown' || this.status === 'racing' || this.status === 'results'
+  }
+
+  self(): RoomPlayer | undefined {
+    return this.players.get(this.selfId)
+  }
+
+  livePlayers(): RoomPlayer[] {
+    return [...this.players.values()]
+  }
+
+  private hostId(): string | null {
+    let host: string | null = null
+    for (const id of this.players.keys()) if (host === null || id < host) host = id
+    return host
+  }
+
+  /**
+   * Slots may only be reshuffled before a race starts, so colours and grid
+   * positions never jump around mid-race.
+   */
+  private canReshuffle() {
+    return this.status === 'lobby' || this.status === 'connecting'
+  }
+
+  /**
+   * Slot order is the sorted id order, so every client independently derives
+   * the same slot for the same player - no host negotiation needed.
+   */
+  private recomputeSlots() {
+    const ids = [...this.players.keys()].sort()
+    ids.forEach((id, index) => {
+      const player = this.players.get(id)!
+      player.slot = index
+    })
+  }
+
+  // ------------------------------------------------------------------ joining
+  async create() {
+    await this.connect(randomRoomCode())
+  }
+
+  async join(rawCode: string) {
+    const code = normalizeRoomCode(rawCode)
+    if (code.length < 4) {
+      this.fail('Enter the full room code')
+      return
+    }
+    await this.connect(code)
+  }
+
+  private async connect(code: string) {
+    this.teardown()
+    this.code = code
+    this.kind = isOnlineConfigured ? 'online' : 'local'
+    this.status = 'connecting'
+    this.error = null
+    this.emit()
+
+    const handle = (message: NetMessage) => this.receive(message)
+
+    try {
+      this.transport =
+        this.kind === 'online'
+          ? await createOnlineTransport(code, handle)
+          : createLocalTransport(code, handle)
+    } catch (cause) {
+      this.fail(cause instanceof Error ? cause.message : 'Could not reach the room')
+      return
+    }
+
+    this.addSelf()
+    this.send({ t: 'hello', id: this.selfId, name: this.selfName })
+
+    // Give everyone a moment to answer before deciding whether the room is full.
+    await new Promise((resolve) => setTimeout(resolve, DISCOVERY_MS))
+    if (this.status !== 'connecting') return
+
+    if (this.players.size > MAX_PLAYERS) {
+      this.send({ t: 'bye', id: this.selfId })
+      this.fail(`Room is full (${MAX_PLAYERS} players max)`)
+      return
+    }
+
+    // Final ordering once discovery is done, so all clients agree on slots.
+    this.recomputeSlots()
+    this.status = 'lobby'
+    this.startTimers()
+    this.emit()
+  }
+
+  private addSelf() {
+    this.players.set(this.selfId, {
+      id: this.selfId,
+      name: this.selfName,
+      slot: 0,
+      isSelf: true,
+      lastSeen: Date.now(),
+      distance: 0,
+      x: 0,
+      jumpY: 0,
+      alive: true,
+      finalDistance: null,
+    })
+    this.recomputeSlots()
+  }
+
+  private fail(message: string) {
+    this.teardown()
+    this.status = 'error'
+    this.error = message
+    this.emit()
+  }
+
+  leave() {
+    if (this.transport) this.send({ t: 'bye', id: this.selfId })
+    this.teardown()
+    this.status = 'idle'
+    this.error = null
+    this.emit()
+  }
+
+  private teardown() {
+    this.transport?.close()
+    this.transport = null
+    this.players.clear()
+    this.code = ''
+    this.countdownEndsAt = 0
+    for (const timer of [this.beatTimer, this.pruneTimer, this.emitTimer, this.netTimer, this.countdownTimer]) {
+      if (timer !== null) clearInterval(timer)
+    }
+    this.beatTimer = this.pruneTimer = this.emitTimer = this.netTimer = this.countdownTimer = null
+  }
+
+  private startTimers() {
+    // Heartbeats run on a plain timer, not the render loop: a player who
+    // switches tabs has their animation frames paused by the browser, and
+    // should stay in the roster (frozen) instead of being dropped.
+    this.beatTimer = window.setInterval(() => {
+      if (this.status !== 'idle' && this.status !== 'error') {
+        this.send({ t: 'beat', id: this.selfId })
+      }
+    }, BEAT_MS)
+
+    // Position updates, for the same reason.
+    this.netTimer = window.setInterval(() => {
+      if (this.status === 'racing') {
+        this.publishState(game.distance, game.x, game.jumpY, game.alive)
+      }
+    }, Math.round(1000 / STATE_HZ))
+
+    this.pruneTimer = window.setInterval(() => {
+      const cutoff = Date.now() - TIMEOUT_MS
+      let removed = false
+      for (const [id, player] of this.players) {
+        if (!player.isSelf && player.lastSeen < cutoff) {
+          this.players.delete(id)
+          removed = true
+        }
+      }
+      if (removed) {
+        if (this.canReshuffle()) this.recomputeSlots()
+        this.checkRaceOver()
+      }
+      // Keep the lobby fresh (player count, host, "race in progress").
+      if (removed || this.status === 'lobby') this.emit()
+    }, 1000)
+
+    this.emitTimer = window.setInterval(() => {
+      if (this.dirty) this.emit()
+    }, EMIT_MS)
+  }
+
+  private send(message: NetMessage) {
+    this.transport?.send(message)
+  }
+
+  // ----------------------------------------------------------------- receiving
+  private receive(message: NetMessage) {
+    switch (message.t) {
+      case 'hello': {
+        this.touch(message.id, message.name)
+        // Tell the newcomer we exist. Slots only shift around in the lobby.
+        this.send({ t: 'here', id: this.selfId, name: this.selfName, racing: this.isMultiplayer })
+        if (this.canReshuffle()) this.recomputeSlots()
+        this.emit()
+        break
+      }
+      case 'here': {
+        this.touch(message.id, message.name)
+        if (this.canReshuffle()) this.recomputeSlots()
+        this.emit()
+        break
+      }
+      case 'beat': {
+        const player = this.players.get(message.id)
+        if (player) player.lastSeen = Date.now()
+        break
+      }
+      case 'bye': {
+        if (this.players.delete(message.id)) {
+          if (this.canReshuffle()) this.recomputeSlots()
+          this.checkRaceOver()
+          this.emit()
+        }
+        break
+      }
+      case 'go': {
+        this.beginCountdown(message.seed)
+        break
+      }
+      case 's': {
+        // Someone is mid-race while we sit in the lobby: joined too late, so
+        // this round is not ours to start.
+        if (this.status === 'lobby' || this.status === 'connecting') {
+          this.lastRemoteRaceSignal = Date.now()
+        }
+        const player = this.players.get(message.id)
+        if (!player) break
+        player.lastSeen = Date.now()
+        player.distance = message.d
+        player.x = message.x
+        player.jumpY = message.y
+        player.alive = message.a === 1
+        this.markDirty()
+        break
+      }
+      case 'fin': {
+        const player = this.players.get(message.id)
+        if (!player) break
+        player.lastSeen = Date.now()
+        player.alive = false
+        player.distance = message.d
+        player.finalDistance = message.d
+        this.checkRaceOver()
+        this.emit()
+        break
+      }
+      case 'lobby': {
+        this.returnToLobbyLocal()
+        break
+      }
+    }
+  }
+
+  private touch(id: string, name: string) {
+    const existing = this.players.get(id)
+    if (existing) {
+      existing.name = name
+      existing.lastSeen = Date.now()
+      return
+    }
+    this.players.set(id, {
+      id,
+      name,
+      slot: this.players.size,
+      isSelf: false,
+      lastSeen: Date.now(),
+      distance: 0,
+      x: 0,
+      jumpY: 0,
+      alive: true,
+      finalDistance: null,
+    })
+  }
+
+  // -------------------------------------------------------------------- race
+  /** Host only. */
+  startRace() {
+    if (this.status !== 'lobby' || this.getSnapshot().raceInProgress) return
+    // A fresh seed per round, so the same room never replays the same track.
+    const seed = randomSeed()
+    this.send({ t: 'go', seed })
+    this.beginCountdown(seed)
+  }
+
+  private beginCountdown(seed: number) {
+    if (this.status !== 'lobby') return
+    this.raceSeed = seed
+    this.lastRemoteRaceSignal = 0
+    this.status = 'countdown'
+    this.countdownEndsAt = Date.now() + COUNTDOWN_MS
+    for (const player of this.players.values()) {
+      player.distance = 0
+      player.x = 0
+      player.jumpY = 0
+      player.alive = true
+      player.finalDistance = null
+    }
+    this.emit()
+
+    this.countdownTimer = window.setTimeout(() => {
+      this.countdownTimer = null
+      if (this.status !== 'countdown') return
+      this.status = 'racing'
+      const self = this.self()
+      startRun({
+        seed: this.raceSeed,
+        lane: self ? Math.min(MAX_PLAYERS - 1, self.slot) : 2,
+        stagger: staggerForSlot(self ? self.slot : 0),
+        multiplayer: true,
+      })
+      this.emit()
+    }, COUNTDOWN_MS) as unknown as number
+  }
+
+  /** Sent 10x a second while racing. */
+  private publishState(distance: number, x: number, jumpY: number, alive: boolean) {
+    const self = this.self()
+    if (self) {
+      self.distance = distance
+      self.x = x
+      self.jumpY = jumpY
+      self.alive = alive
+      self.lastSeen = Date.now()
+      this.markDirty()
+    }
+    this.send({ t: 's', id: this.selfId, d: distance, x, y: jumpY, a: alive ? 1 : 0 })
+  }
+
+  /** Called once when the local player crashes. Their distance is now locked. */
+  reportCrash(distance: number) {
+    const self = this.self()
+    if (self) {
+      self.alive = false
+      self.distance = distance
+      self.finalDistance = distance
+    }
+    this.send({ t: 'fin', id: this.selfId, d: distance })
+    this.checkRaceOver()
+    this.emit()
+  }
+
+  private checkRaceOver() {
+    if (this.status !== 'racing') return
+    const players = this.livePlayers()
+    if (players.length === 0) return
+    if (players.some((player) => player.alive)) return
+    this.status = 'results'
+    this.countdownEndsAt = 0
+    endRun()
+  }
+
+  /** Host only. */
+  returnToLobby() {
+    this.send({ t: 'lobby' })
+    this.returnToLobbyLocal()
+  }
+
+  private returnToLobbyLocal() {
+    if (this.status !== 'results' && this.status !== 'racing') return
+    this.status = 'lobby'
+    this.lastRemoteRaceSignal = 0
+    for (const player of this.players.values()) {
+      player.distance = 0
+      player.x = 0
+      player.jumpY = 0
+      player.alive = true
+      player.finalDistance = null
+    }
+    game.phase = 'menu'
+    this.emit()
+  }
+
+  /** Distance used for ranking: frozen value once a player has crashed. */
+  rankedDistance(player: RoomPlayer): number {
+    return player.finalDistance ?? player.distance
+  }
+
+  standings(): RoomPlayer[] {
+    return this.livePlayers().sort((a, b) => this.rankedDistance(b) - this.rankedDistance(a))
+  }
+
+  /** Furthest player still running - used to follow the action while spectating. */
+  leaderDistance(): number {
+    let best = -Infinity
+    for (const player of this.players.values()) {
+      if (player.alive && player.distance > best) best = player.distance
+    }
+    return best
+  }
+
+  setName(name: string) {
+    this.selfName = name.slice(0, 14) || randomName()
+    const self = this.self()
+    if (self) self.name = this.selfName
+    this.emit()
+  }
+}
+
+export const room = new Room()

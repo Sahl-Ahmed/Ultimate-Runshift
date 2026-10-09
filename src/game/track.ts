@@ -10,11 +10,7 @@ import {
   WARMUP_SEGMENTS,
 } from './constants'
 import type { Biome, ObstacleKind, PropKind, Segment } from './types'
-
-// ------------------------------------------------------------------ helpers
-const randomInt = (min: number, max: number) => min + Math.floor(Math.random() * (max - min + 1))
-const randomRange = (min: number, max: number) => min + Math.random() * (max - min)
-const pick = <T,>(values: readonly T[]): T => values[Math.floor(Math.random() * values.length)]
+import { mulberry32, randomSeed, rngInt, rngPick, rngRange, type Rng } from './rng'
 
 /** Blueprint for every obstacle kind: box size and which biome it belongs to. */
 const OBSTACLE_SIZES: Record<ObstacleKind, [number, number, number]> = {
@@ -61,7 +57,10 @@ class TrackManager {
   segments: Segment[] = []
   /** Bumped whenever segments are added or removed, so React can re-render. */
   version = 0
+  /** Seed the current track was built from. */
+  seed = 0
 
+  private rng: Rng = mulberry32(0)
   private nextIndex = 0
   private nextZ = 0
   private biome: Biome = 'road'
@@ -87,7 +86,14 @@ class TrackManager {
     for (const listener of this.listeners) listener()
   }
 
-  reset() {
+  /**
+   * Rebuilds the track. Passing the same seed on every machine produces an
+   * identical track, because segments are always generated in index order and
+   * therefore consume the random stream in the same order everywhere.
+   */
+  reset(seed: number = randomSeed()) {
+    this.seed = seed >>> 0
+    this.rng = mulberry32(this.seed)
     this.segments = []
     this.nextIndex = 0
     this.nextZ = -SEGMENT_LENGTH // one segment behind the player, so the start looks solid
@@ -98,9 +104,12 @@ class TrackManager {
     this.emit()
   }
 
-  /** Moves the whole track toward the player and recycles segments. */
-  update(delta: number, speed: number) {
-    const shift = speed * delta
+  /**
+   * Scrolls the whole track toward the player by `shift` world units and
+   * recycles segments that fell behind.
+   */
+  update(shift: number) {
+    if (shift <= 0) return
     const segments = this.segments
     for (let i = 0; i < segments.length; i++) segments[i].z -= shift
     this.lastRowZ -= shift
@@ -132,7 +141,7 @@ class TrackManager {
   private append() {
     if (this.biomeLeft <= 0) {
       this.biome = this.nextBiome()
-      this.biomeLeft = randomInt(BIOME_MIN_SEGMENTS, BIOME_MAX_SEGMENTS)
+      this.biomeLeft = rngInt(this.rng, BIOME_MIN_SEGMENTS, BIOME_MAX_SEGMENTS)
     }
     this.biomeLeft--
 
@@ -165,18 +174,18 @@ class TrackManager {
         : this.biome === 'road'
           ? ['railway', 'railway', 'river']
           : ['road', 'road', 'river']
-    return pick(options)
+    return rngPick(this.rng, options)
   }
 
   private buildObstacles(segment: Segment) {
     // Up to two rows per segment, always respecting the minimum row spacing.
-    const candidates = [randomRange(4, 9), randomRange(14, 20)]
+    const candidates = [rngRange(this.rng, 4, 9), rngRange(this.rng, 14, 20)]
     const difficulty = Math.min(1, segment.index / 60)
 
     for (const localZ of candidates) {
       const worldZ = segment.z + localZ
       if (worldZ - this.lastRowZ < MIN_ROW_GAP) continue
-      if (Math.random() > 0.55 + difficulty * 0.3) continue
+      if (this.rng() > 0.55 + difficulty * 0.3) continue
 
       this.buildRow(segment, localZ, difficulty)
       this.lastRowZ = worldZ
@@ -187,20 +196,20 @@ class TrackManager {
     const pool = OBSTACLES_BY_BIOME[segment.biome]
     // 1..3 blocked lanes: two free lanes always remain, so a safe path exists.
     const maxBlocked = difficulty > 0.5 ? 3 : 2
-    const blockedCount = randomInt(1, maxBlocked)
+    const blockedCount = rngInt(this.rng, 1, maxBlocked)
 
     const lanes = [0, 1, 2, 3, 4]
     for (let i = lanes.length - 1; i > 0; i--) {
-      const j = Math.floor(Math.random() * (i + 1))
+      const j = Math.floor(this.rng() * (i + 1))
       ;[lanes[i], lanes[j]] = [lanes[j], lanes[i]]
     }
     const blocked = lanes.slice(0, blockedCount)
 
     // Guarantee at least one low (jumpable) obstacle in the row.
-    const lowIndex = Math.floor(Math.random() * blocked.length)
+    const lowIndex = Math.floor(this.rng() * blocked.length)
     blocked.forEach((lane, i) => {
-      const useLow = i === lowIndex || pool.tall.length === 0 || Math.random() < 0.5
-      const kind = useLow ? pick(pool.low) : pick(pool.tall)
+      const useLow = i === lowIndex || pool.tall.length === 0 || this.rng() < 0.5
+      const kind = useLow ? rngPick(this.rng, pool.low) : rngPick(this.rng, pool.tall)
       segment.obstacles.push({
         id: nextObstacleId++,
         kind,
@@ -214,18 +223,18 @@ class TrackManager {
   private buildProps(segment: Segment) {
     const kinds = PROPS_BY_BIOME[segment.biome]
     const edge = segment.biome === 'river' ? TRACK_WIDTH * 0.5 + 9 : TRACK_WIDTH * 0.5 + 1.6
-    const count = randomInt(5, 9)
+    const count = rngInt(this.rng, 5, 9)
 
     for (let i = 0; i < count; i++) {
-      const side = Math.random() < 0.5 ? -1 : 1
+      const side = this.rng() < 0.5 ? -1 : 1
       segment.props.push({
         id: nextPropId++,
-        kind: pick(kinds),
-        x: side * randomRange(edge, edge + 14),
-        z: randomRange(0, SEGMENT_LENGTH),
-        scale: randomRange(0.8, 1.45),
-        rotation: randomRange(0, Math.PI * 2),
-        colorIndex: randomInt(0, 2),
+        kind: rngPick(this.rng, kinds),
+        x: side * rngRange(this.rng, edge, edge + 14),
+        z: rngRange(this.rng, 0, SEGMENT_LENGTH),
+        scale: rngRange(this.rng, 0.8, 1.45),
+        rotation: rngRange(this.rng, 0, Math.PI * 2),
+        colorIndex: rngInt(this.rng, 0, 2),
       })
     }
   }

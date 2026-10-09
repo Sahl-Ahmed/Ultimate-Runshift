@@ -1,87 +1,39 @@
-import { useRef } from 'react'
+import { useMemo } from 'react'
 import { useFrame } from '@react-three/fiber'
-import * as THREE from 'three'
-import { BOX, COLORS, mat } from '../three/resources'
-import { game } from '../game/state'
+import { useSyncExternalStore } from 'react'
 import { LANE_X } from '../game/constants'
+import { game } from '../game/state'
+import { outfitForSlot } from '../net/identity'
+import { room } from '../net/room'
+import { Runner, type RunnerPose } from './Runner'
 
 /**
- * Blocky humanoid built from primitives only. The group origin sits at the
- * character's feet, so positioning is just "ground height + jump height".
+ * The local player. Always drawn at z = 0 - the world scrolls instead. Hidden
+ * while spectating a race, because the camera then follows the leader.
  */
 export function Player() {
-  const root = useRef<THREE.Group>(null)
-  const body = useRef<THREE.Group>(null)
-  const leftArm = useRef<THREE.Group>(null)
-  const rightArm = useRef<THREE.Group>(null)
-  const leftLeg = useRef<THREE.Group>(null)
-  const rightLeg = useRef<THREE.Group>(null)
+  const snapshot = useSyncExternalStore(room.subscribe, room.getSnapshot)
+  const self = snapshot.players.find((player) => player.isSelf)
+  const outfit = outfitForSlot(self ? self.slot : 0)
+
+  const pose = useMemo<RunnerPose>(
+    () => ({ x: 0, y: 0, z: 0, runTime: 0, speed: 0, onGround: true, running: false, drift: 0 }),
+    [],
+  )
 
   useFrame(() => {
-    if (!root.current || !body.current) return
-
-    root.current.position.set(game.x, game.groundY + game.jumpY, 0)
-
-    // Lean into the lane change for a bit of weight.
-    const drift = THREE.MathUtils.clamp(LANE_X[game.lane] - game.x, -2, 2)
-    root.current.rotation.z = THREE.MathUtils.lerp(root.current.rotation.z, -drift * 0.12, 0.2)
-
-    const running = game.phase === 'playing'
-    const cadence = game.runTime * (6 + game.speed * 0.55)
-    const swing = Math.sin(cadence)
-
-    if (game.onGround && running) {
-      // Run cycle: opposite arm / leg swing plus a small vertical bob.
-      leftLeg.current!.rotation.x = swing * 0.95
-      rightLeg.current!.rotation.x = -swing * 0.95
-      leftArm.current!.rotation.x = -swing * 0.8
-      rightArm.current!.rotation.x = swing * 0.8
-      body.current.position.y = Math.abs(Math.cos(cadence)) * 0.07
-      body.current.rotation.x = 0.06
-    } else {
-      // Airborne tuck.
-      const target = running ? 1 : 0
-      leftLeg.current!.rotation.x = THREE.MathUtils.lerp(leftLeg.current!.rotation.x, -0.9 * target, 0.25)
-      rightLeg.current!.rotation.x = THREE.MathUtils.lerp(rightLeg.current!.rotation.x, 0.5 * target, 0.25)
-      leftArm.current!.rotation.x = THREE.MathUtils.lerp(leftArm.current!.rotation.x, -2.2 * target, 0.25)
-      rightArm.current!.rotation.x = THREE.MathUtils.lerp(rightArm.current!.rotation.x, -2.2 * target, 0.25)
-      body.current.position.y = 0
-      body.current.rotation.x = 0.1
-    }
+    pose.x = game.x
+    pose.y = game.groundY + game.jumpY
+    pose.z = 0
+    pose.runTime = game.runTime
+    pose.speed = game.speed
+    pose.onGround = game.onGround
+    pose.running = game.phase === 'playing' && game.alive
+    pose.drift = LANE_X[game.lane] - game.x
   })
 
-  return (
-    <group ref={root}>
-      <group ref={body}>
-        {/* torso */}
-        <mesh geometry={BOX} material={mat(COLORS.shirt)} position={[0, 1.12, 0]} scale={[0.72, 0.8, 0.42]} castShadow />
-        {/* hips */}
-        <mesh geometry={BOX} material={mat(COLORS.pants)} position={[0, 0.76, 0]} scale={[0.7, 0.3, 0.42]} castShadow />
-        {/* head */}
-        <mesh geometry={BOX} material={mat(COLORS.skin)} position={[0, 1.78, 0]} scale={[0.5, 0.5, 0.5]} castShadow />
-        {/* hair */}
-        <mesh geometry={BOX} material={mat(COLORS.hair)} position={[0, 2.03, -0.02]} scale={[0.54, 0.12, 0.54]} />
+  // While spectating there is no local runner on screen to show.
+  if (game.multiplayer && !game.alive) return null
 
-        {/* arms - rotated around the shoulder */}
-        <group ref={leftArm} position={[-0.46, 1.44, 0]}>
-          <mesh geometry={BOX} material={mat(COLORS.shirt)} position={[0, -0.18, 0]} scale={[0.2, 0.36, 0.2]} castShadow />
-          <mesh geometry={BOX} material={mat(COLORS.skin)} position={[0, -0.5, 0]} scale={[0.2, 0.3, 0.2]} />
-        </group>
-        <group ref={rightArm} position={[0.46, 1.44, 0]}>
-          <mesh geometry={BOX} material={mat(COLORS.shirt)} position={[0, -0.18, 0]} scale={[0.2, 0.36, 0.2]} castShadow />
-          <mesh geometry={BOX} material={mat(COLORS.skin)} position={[0, -0.5, 0]} scale={[0.2, 0.3, 0.2]} />
-        </group>
-
-        {/* legs - rotated around the hip */}
-        <group ref={leftLeg} position={[-0.19, 0.68, 0]}>
-          <mesh geometry={BOX} material={mat(COLORS.pants)} position={[0, -0.22, 0]} scale={[0.26, 0.44, 0.26]} castShadow />
-          <mesh geometry={BOX} material={mat(COLORS.shoes)} position={[0, -0.52, 0.04]} scale={[0.28, 0.18, 0.34]} />
-        </group>
-        <group ref={rightLeg} position={[0.19, 0.68, 0]}>
-          <mesh geometry={BOX} material={mat(COLORS.pants)} position={[0, -0.22, 0]} scale={[0.26, 0.44, 0.26]} castShadow />
-          <mesh geometry={BOX} material={mat(COLORS.shoes)} position={[0, -0.52, 0.04]} scale={[0.28, 0.18, 0.34]} />
-        </group>
-      </group>
-    </group>
-  )
+  return <Runner pose={pose} shirt={outfit.shirt} pants={outfit.pants} />
 }

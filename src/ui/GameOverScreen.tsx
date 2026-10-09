@@ -21,7 +21,7 @@ export function GameOverScreen({ score, best }: { score: number; best: number })
         </div>
         {isNewBest && <p className="new-best">New personal best!</p>}
         <Controls />
-        <button className="btn" onClick={startRun} autoFocus>
+        <button className="btn" onClick={() => startRun()} autoFocus>
           Restart
         </button>
         <p className="footnote">Or press R</p>

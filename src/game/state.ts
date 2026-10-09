@@ -8,6 +8,8 @@ import {
   SCORE_PER_UNIT,
   SPEED_PER_DISTANCE,
 } from './constants'
+import { randomSeed } from './rng'
+import { track } from './track'
 import type { Biome, Phase } from './types'
 
 /**
@@ -17,8 +19,21 @@ import type { Biome, Phase } from './types'
  */
 export interface GameState {
   phase: Phase
+  /** True while this player is still running; false once they crash. */
+  alive: boolean
+  /** Set for a networked race: crashing starts spectating instead of ending. */
+  multiplayer: boolean
+  /** Seed the current run's track was built from. */
+  seed: number
+  /** Visual marathon head start for this player. Never affects the score. */
+  stagger: number
   /** Distance travelled in world units. */
   distance: number
+  /**
+   * Distance the camera / track scroll is based on. Equal to `distance` while
+   * running; after a crash in a race it drifts to the leader so you can watch.
+   */
+  viewDistance: number
   speed: number
   lane: number
   /** Smoothed X position of the player. */
@@ -38,7 +53,12 @@ export interface GameState {
 
 export const game: GameState = {
   phase: 'menu',
+  alive: true,
+  multiplayer: false,
+  seed: 0,
+  stagger: 0,
   distance: 0,
+  viewDistance: 0,
   speed: BASE_SPEED,
   lane: 2,
   x: LANE_X[2],
@@ -130,23 +150,26 @@ export function syncHud() {
 }
 
 // --------------------------------------------------------------- lifecycle
-type ResetHandler = () => void
-const resetHandlers = new Set<ResetHandler>()
-
-/** Lets the track manager (and anything else) hook into a run reset. */
-export function onReset(handler: ResetHandler) {
-  resetHandlers.add(handler)
-  return () => {
-    resetHandlers.delete(handler)
-  }
+export interface RunOptions {
+  /** Shared across a room so every player gets an identical track. */
+  seed?: number
+  lane?: number
+  multiplayer?: boolean
+  stagger?: number
 }
 
-export function startRun() {
+export function startRun(options: RunOptions = {}) {
+  const lane = Math.min(LANE_COUNT - 1, Math.max(0, options.lane ?? 2))
   game.phase = 'playing'
+  game.alive = true
+  game.multiplayer = options.multiplayer ?? false
+  game.seed = options.seed ?? randomSeed()
+  game.stagger = options.stagger ?? 0
   game.distance = 0
+  game.viewDistance = 0
   game.speed = BASE_SPEED
-  game.lane = 2
-  game.x = LANE_X[2]
+  game.lane = lane
+  game.x = LANE_X[lane]
   game.jumpY = 0
   game.velocityY = 0
   game.onGround = true
@@ -154,7 +177,9 @@ export function startRun() {
   game.biome = 'road'
   game.boat = 0
   game.runTime = 0
-  for (const handler of resetHandlers) handler()
+  // Rebuild the world for this run. In a race every player passes the same
+  // seed, so everyone gets an identical track.
+  track.reset(game.seed)
   snapshot = { ...snapshot, phase: 'playing', score: 0, speed: BASE_SPEED, biome: 'road' }
   emit()
 }
@@ -162,6 +187,7 @@ export function startRun() {
 export function endRun() {
   if (game.phase !== 'playing') return
   game.phase = 'over'
+  game.alive = false
   const score = currentScore()
   const best = Math.max(snapshot.best, score)
   if (best !== snapshot.best) saveBest(best)
@@ -170,12 +196,12 @@ export function endRun() {
 }
 
 export function moveLane(direction: -1 | 1) {
-  if (game.phase !== 'playing') return
+  if (game.phase !== 'playing' || !game.alive) return
   game.lane = Math.min(LANE_COUNT - 1, Math.max(0, game.lane + direction))
 }
 
 export function jump() {
-  if (game.phase !== 'playing' || !game.onGround) return
+  if (game.phase !== 'playing' || !game.alive || !game.onGround) return
   game.onGround = false
   game.velocityY = JUMP_VELOCITY
 }

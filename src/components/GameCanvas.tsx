@@ -1,6 +1,7 @@
 import { Canvas } from '@react-three/fiber'
 import { Boat } from './Boat'
 import { GameLoop } from './GameLoop'
+import { Ghosts } from './Ghosts'
 import { Player } from './Player'
 import { Scenery } from './Scenery'
 import { Track } from './Track'
@@ -38,6 +39,7 @@ export function GameCanvas() {
       <Scenery />
       <Track />
       <Boat />
+      <Ghosts />
       <Player />
     </Canvas>
   )

@@ -1,23 +1,51 @@
 import { useSyncExternalStore } from 'react'
 import { GameCanvas } from './components/GameCanvas'
-import { hudStore } from './game/state'
+import { game, hudStore } from './game/state'
 import { useKeyboard } from './game/useKeyboard'
+import { room } from './net/room'
 import { GameOverScreen } from './ui/GameOverScreen'
 import { HUD } from './ui/HUD'
-import { StartScreen } from './ui/StartScreen'
+import { LobbyScreen } from './ui/LobbyScreen'
+import { MainMenu } from './ui/MainMenu'
+import {
+  ConnectingScreen,
+  Countdown,
+  Leaderboard,
+  ResultsScreen,
+  RoomErrorScreen,
+  SpectatingBanner,
+} from './ui/RaceOverlay'
 import './ui/ui.css'
 
 export default function App() {
   useKeyboard()
-  const snapshot = useSyncExternalStore(hudStore.subscribe, hudStore.getSnapshot)
+  const hud = useSyncExternalStore(hudStore.subscribe, hudStore.getSnapshot)
+  const net = useSyncExternalStore(room.subscribe, room.getSnapshot)
+
+  const solo = net.status === 'idle'
 
   return (
     <div className="app">
       <GameCanvas />
       <div className="ui-layer">
-        {snapshot.phase === 'playing' && <HUD snapshot={snapshot} />}
-        {snapshot.phase === 'menu' && <StartScreen best={snapshot.best} />}
-        {snapshot.phase === 'over' && <GameOverScreen score={snapshot.score} best={snapshot.best} />}
+        {/* ---------------- solo flow ---------------- */}
+        {solo && hud.phase === 'playing' && <HUD snapshot={hud} />}
+        {solo && hud.phase === 'menu' && <MainMenu best={hud.best} />}
+        {solo && hud.phase === 'over' && <GameOverScreen score={hud.score} best={hud.best} />}
+
+        {/* ---------------- room flow ---------------- */}
+        {net.status === 'connecting' && <ConnectingScreen />}
+        {net.status === 'error' && <RoomErrorScreen message={net.error ?? 'Unknown error'} />}
+        {net.status === 'lobby' && <LobbyScreen snapshot={net} />}
+        {net.status === 'countdown' && <Countdown endsAt={net.countdownEndsAt} />}
+        {net.status === 'racing' && (
+          <>
+            <HUD snapshot={hud} />
+            <Leaderboard snapshot={net} />
+            {!game.alive && <SpectatingBanner />}
+          </>
+        )}
+        {net.status === 'results' && <ResultsScreen snapshot={net} best={hud.best} />}
       </div>
     </div>
   )
