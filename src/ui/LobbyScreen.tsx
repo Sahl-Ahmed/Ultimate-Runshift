@@ -43,7 +43,7 @@ export function LobbyScreen({ snapshot }: { snapshot: RoomSnapshot }) {
                 <span className="player-name">{player.name}</span>
                 <span className="player-tags">
                   {player.isSelf && <em className="tag you">You</em>}
-                  {player.id === hostIdOf(snapshot) && <em className="tag host">Host</em>}
+                  {player.id === snapshot.hostId && <em className="tag host">Host</em>}
                 </span>
                 <span className="player-grid">Grid {player.slot + 1}</span>
               </div>
@@ -79,11 +79,4 @@ export function LobbyScreen({ snapshot }: { snapshot: RoomSnapshot }) {
       </div>
     </div>
   )
-}
-
-/** The host is simply the lowest id, which every client works out identically. */
-function hostIdOf(snapshot: RoomSnapshot): string | null {
-  let host: string | null = null
-  for (const player of snapshot.players) if (host === null || player.id < host) host = player.id
-  return host
 }

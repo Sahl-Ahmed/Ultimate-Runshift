@@ -38,9 +38,9 @@ export interface RoomPlayer extends Profile {
 
 export type NetMessage =
   /** "I am here" - also asks everyone else to announce themselves back. */
-  | { t: 'hello'; id: string; name: string }
-  /** Reply to a hello so the newcomer learns about us. */
-  | { t: 'here'; id: string; name: string; racing: boolean }
+  | { t: 'hello'; id: string; name: string; host: boolean }
+  /** Reply to a hello so the newcomer learns about us, and who hosts. */
+  | { t: 'here'; id: string; name: string; racing: boolean; host: boolean }
   | { t: 'beat'; id: string }
   | { t: 'bye'; id: string }
   /** Host starts the countdown and picks the seed for this round's track. */

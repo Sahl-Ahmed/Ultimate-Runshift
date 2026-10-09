@@ -145,7 +145,11 @@ src/
   switches tabs (which pauses animation frames) stays in the roster instead of
   being dropped.
 - Player slots come from the sorted client ids, so every client independently
-  derives the same colours, grid positions and host with no negotiation.
+  derives the same colours and grid positions with no negotiation.
+- The player who **created** the room is the host, and announces that when
+  introducing themselves. If the host leaves, every client promotes the lowest
+  remaining id — a rule they all apply identically, so a room is never left
+  without a host.
 - Multiplayer is peer-to-peer and trusts each client's reported distance. That is
   fine among friends, but it is not cheat-proof.
 

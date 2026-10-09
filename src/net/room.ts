@@ -27,6 +27,8 @@ export interface RoomSnapshot {
   code: string
   kind: TransportKind
   selfId: string
+  /** Id of the player hosting the room (the one who created it). */
+  hostId: string | null
   isHost: boolean
   players: RoomPlayer[]
   error: string | null
@@ -53,6 +55,8 @@ class Room {
   private kind: TransportKind = 'local'
   private selfId = randomId()
   private selfName = randomName()
+  /** Who hosts: set to self when creating a room, learned when joining one. */
+  private hostId: string | null = null
   private error: string | null = null
   private countdownEndsAt = 0
   /** Track seed for the current round, chosen by the host. */
@@ -90,7 +94,8 @@ class Room {
       code: this.code,
       kind: this.kind,
       selfId: this.selfId,
-      isHost: this.hostId() === this.selfId,
+      hostId: this.effectiveHostId(),
+      isHost: this.effectiveHostId() === this.selfId,
       players,
       error: this.error,
       countdownEndsAt: this.countdownEndsAt,
@@ -123,10 +128,16 @@ class Room {
     return [...this.players.values()]
   }
 
-  private hostId(): string | null {
-    let host: string | null = null
-    for (const id of this.players.keys()) if (host === null || id < host) host = id
-    return host
+  /**
+   * The player who created the room hosts it. If they leave, every client
+   * promotes the lowest remaining id - a rule they all compute identically,
+   * so a room never ends up without a host.
+   */
+  private effectiveHostId(): string | null {
+    if (this.hostId !== null && this.players.has(this.hostId)) return this.hostId
+    let fallback: string | null = null
+    for (const id of this.players.keys()) if (fallback === null || id < fallback) fallback = id
+    return fallback
   }
 
   /**
@@ -151,7 +162,7 @@ class Room {
 
   // ------------------------------------------------------------------ joining
   async create() {
-    await this.connect(randomRoomCode())
+    await this.connect(randomRoomCode(), true)
   }
 
   async join(rawCode: string) {
@@ -160,11 +171,13 @@ class Room {
       this.fail('Enter the full room code')
       return
     }
-    await this.connect(code)
+    await this.connect(code, false)
   }
 
-  private async connect(code: string) {
+  private async connect(code: string, asHost: boolean) {
     this.teardown()
+    // Creating the room makes you the host; joining means waiting to be told.
+    this.hostId = asHost ? this.selfId : null
     this.code = code
     this.kind = isOnlineConfigured ? 'online' : 'local'
     this.status = 'connecting'
@@ -184,7 +197,7 @@ class Room {
     }
 
     this.addSelf()
-    this.send({ t: 'hello', id: this.selfId, name: this.selfName })
+    this.send({ t: 'hello', id: this.selfId, name: this.selfName, host: this.hostId === this.selfId })
 
     // Give everyone a moment to answer before deciding whether the room is full.
     await new Promise((resolve) => setTimeout(resolve, DISCOVERY_MS))
@@ -296,14 +309,22 @@ class Room {
     switch (message.t) {
       case 'hello': {
         this.touch(message.id, message.name)
-        // Tell the newcomer we exist. Slots only shift around in the lobby.
-        this.send({ t: 'here', id: this.selfId, name: this.selfName, racing: this.isMultiplayer })
+        this.noteHost(message)
+        // Tell the newcomer we exist, and whether we are the host.
+        this.send({
+          t: 'here',
+          id: this.selfId,
+          name: this.selfName,
+          racing: this.isMultiplayer,
+          host: this.effectiveHostId() === this.selfId,
+        })
         if (this.canReshuffle()) this.recomputeSlots()
         this.emit()
         break
       }
       case 'here': {
         this.touch(message.id, message.name)
+        this.noteHost(message)
         if (this.canReshuffle()) this.recomputeSlots()
         this.emit()
         break
@@ -368,6 +389,11 @@ class Room {
         break
       }
     }
+  }
+
+  /** Whoever announces themselves as host is recorded as the host. */
+  private noteHost(message: { id: string; host: boolean }) {
+    if (message.host) this.hostId = message.id
   }
 
   private touch(id: string, name: string) {
