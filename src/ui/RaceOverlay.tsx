@@ -3,6 +3,7 @@ import { SCORE_PER_UNIT } from '../game/constants'
 import { outfitForSlot } from '../net/identity'
 import { room, type RoomSnapshot } from '../net/room'
 import type { RoomPlayer } from '../net/types'
+import { JoinForm } from './JoinForm'
 
 const ORDINALS = ['1st', '2nd', '3rd', '4th', '5th']
 
@@ -151,17 +152,24 @@ export function ConnectingScreen() {
   )
 }
 
-export function RoomErrorScreen({ message }: { message: string }) {
+export function RoomErrorScreen({ snapshot }: { snapshot: RoomSnapshot }) {
   return (
     <div className="overlay">
       <div className="card">
-        <h2 className="panel-title">Could not join</h2>
-        <p className="tagline" style={{ letterSpacing: '0.04em', textTransform: 'none' }}>
-          {message}
-        </p>
-        <button className="btn" onClick={() => room.leave()}>
-          Back to Menu
-        </button>
+        <h2 className="panel-title error-title">{snapshot.error ?? 'Could not join'}</h2>
+        {snapshot.errorDetail && <p className="error-detail">{snapshot.errorDetail}</p>}
+
+        {/* Let them fix the code here instead of starting over. */}
+        <JoinForm initialCode={snapshot.attemptedCode} />
+
+        <div className="menu-actions" style={{ marginTop: 14 }}>
+          <button className="btn btn-alt" onClick={() => void room.create()}>
+            Create a Room Instead
+          </button>
+          <button className="btn btn-ghost" onClick={() => room.leave()}>
+            Back to Menu
+          </button>
+        </div>
       </div>
     </div>
   )

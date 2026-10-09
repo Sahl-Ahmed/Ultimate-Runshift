@@ -39,6 +39,14 @@ colour, and all five line up on a staggered marathon grid.
 - A live leaderboard shows the running order during the race.
 - Someone who joins mid-race waits in the lobby for the next round.
 
+Joining tells you what went wrong, and lets you fix the code on the spot:
+
+| Situation | What you see |
+| --- | --- |
+| Code nobody is hosting | **No room found** |
+| Room already has 5 players | **Room is full** |
+| Fewer than 4 characters typed | **Incomplete code** |
+
 ### Online play setup (optional)
 
 Multiplayer runs over **Supabase Realtime Broadcast**. It needs **no database

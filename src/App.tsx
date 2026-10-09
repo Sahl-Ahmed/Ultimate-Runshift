@@ -36,7 +36,7 @@ export default function App() {
 
         {/* ---------------- room flow ---------------- */}
         {net.status === 'connecting' && <ConnectingScreen />}
-        {net.status === 'error' && <RoomErrorScreen message={net.error ?? 'Unknown error'} />}
+        {net.status === 'error' && <RoomErrorScreen snapshot={net} />}
         {net.status === 'lobby' && <LobbyScreen snapshot={net} />}
         {net.status === 'countdown' && <Countdown endsAt={net.countdownEndsAt} />}
         {net.status === 'racing' && (

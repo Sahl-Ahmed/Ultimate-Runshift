@@ -18,8 +18,12 @@ import {
 export type RoomStatus = 'idle' | 'connecting' | 'lobby' | 'countdown' | 'racing' | 'results' | 'error'
 
 const COUNTDOWN_MS = 3200
-/** Discovery window after sending hello, to collect replies before deciding. */
-const DISCOVERY_MS = 1300
+/**
+ * How long to wait after saying hello before judging who is in the room.
+ * Long enough to collect every reply, since the roster decides both "no room
+ * found" and "room is full".
+ */
+const DISCOVERY_MS = 1500
 const EMIT_MS = 150
 
 export interface RoomSnapshot {
@@ -32,6 +36,10 @@ export interface RoomSnapshot {
   isHost: boolean
   players: RoomPlayer[]
   error: string | null
+  /** Second line of an error, explaining what to do about it. */
+  errorDetail: string | null
+  /** The code the last join attempt used, so the user can correct it. */
+  attemptedCode: string
   countdownEndsAt: number
   /** Another round is already running, so this client waits for the next one. */
   raceInProgress: boolean
@@ -58,6 +66,8 @@ class Room {
   /** Who hosts: set to self when creating a room, learned when joining one. */
   private hostId: string | null = null
   private error: string | null = null
+  private errorDetail: string | null = null
+  private attemptedCode = ''
   private countdownEndsAt = 0
   /** Track seed for the current round, chosen by the host. */
   private raceSeed = 0
@@ -98,6 +108,8 @@ class Room {
       isHost: this.effectiveHostId() === this.selfId,
       players,
       error: this.error,
+      errorDetail: this.errorDetail,
+      attemptedCode: this.attemptedCode,
       countdownEndsAt: this.countdownEndsAt,
       raceInProgress: Date.now() - this.lastRemoteRaceSignal < 3000,
       finishEndsAt: this.finishEndsAt,
@@ -167,8 +179,9 @@ class Room {
 
   async join(rawCode: string) {
     const code = normalizeRoomCode(rawCode)
+    this.attemptedCode = code
     if (code.length < 4) {
-      this.fail('Enter the full room code')
+      this.fail('Incomplete code', 'Room codes are 5 characters, like A2FHJ.')
       return
     }
     await this.connect(code, false)
@@ -182,6 +195,7 @@ class Room {
     this.kind = isOnlineConfigured ? 'online' : 'local'
     this.status = 'connecting'
     this.error = null
+    this.errorDetail = null
     this.emit()
 
     const handle = (message: NetMessage) => this.receive(message)
@@ -192,20 +206,37 @@ class Room {
           ? await createOnlineTransport(code, handle)
           : createLocalTransport(code, handle)
     } catch (cause) {
-      this.fail(cause instanceof Error ? cause.message : 'Could not reach the room')
+      this.fail(
+        'Connection failed',
+        cause instanceof Error ? cause.message : 'Could not reach the multiplayer service.',
+      )
       return
     }
 
     this.addSelf()
-    this.send({ t: 'hello', id: this.selfId, name: this.selfName, host: this.hostId === this.selfId })
+    this.announce()
 
-    // Give everyone a moment to answer before deciding whether the room is full.
-    await new Promise((resolve) => setTimeout(resolve, DISCOVERY_MS))
+    // Give everyone a moment to answer: the roster decides both whether the
+    // room exists at all and whether there is room for one more.
+    await this.wait(DISCOVERY_MS)
     if (this.status !== 'connecting') return
+
+    if (!asHost && this.players.size === 1) {
+      // Nobody answered. Say hello once more before giving up, in case the
+      // first round trip was simply slow.
+      this.announce()
+      await this.wait(DISCOVERY_MS)
+      if (this.status !== 'connecting') return
+
+      if (this.players.size === 1) {
+        this.fail('No room found', `Nobody is hosting room ${code}. Check the code, or create a room yourself.`)
+        return
+      }
+    }
 
     if (this.players.size > MAX_PLAYERS) {
       this.send({ t: 'bye', id: this.selfId })
-      this.fail(`Room is full (${MAX_PLAYERS} players max)`)
+      this.fail('Room is full', `Room ${code} already has ${MAX_PLAYERS} players, which is the maximum.`)
       return
     }
 
@@ -232,10 +263,19 @@ class Room {
     this.recomputeSlots()
   }
 
-  private fail(message: string) {
+  private announce() {
+    this.send({ t: 'hello', id: this.selfId, name: this.selfName, host: this.hostId === this.selfId })
+  }
+
+  private wait(ms: number) {
+    return new Promise((resolve) => setTimeout(resolve, ms))
+  }
+
+  private fail(message: string, detail: string | null = null) {
     this.teardown()
     this.status = 'error'
     this.error = message
+    this.errorDetail = detail
     this.emit()
   }
 
@@ -244,6 +284,7 @@ class Room {
     this.teardown()
     this.status = 'idle'
     this.error = null
+    this.errorDetail = null
     this.emit()
   }
 
@@ -403,6 +444,11 @@ class Room {
       existing.lastSeen = Date.now()
       return
     }
+    // A full room does not admit anyone else. While still connecting we do
+    // record everyone, because that count is exactly what tells us the room
+    // is full and that we are the one who has to back out.
+    if (this.status !== 'connecting' && this.players.size >= MAX_PLAYERS) return
+
     this.players.set(id, {
       id,
       name,

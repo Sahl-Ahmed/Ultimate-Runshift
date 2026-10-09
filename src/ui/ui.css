@@ -326,6 +326,17 @@ kbd {
   outline-offset: 1px;
 }
 
+.error-title {
+  color: var(--danger);
+}
+
+.error-detail {
+  margin: 10px 0 22px;
+  font-size: 13px;
+  line-height: 1.5;
+  opacity: 0.78;
+}
+
 .panel-title {
   margin: 0 0 4px;
   font-size: 22px;
