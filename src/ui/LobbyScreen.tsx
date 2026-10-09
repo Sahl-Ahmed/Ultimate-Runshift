@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { outfitForSlot } from '../net/identity'
 import { room, type RoomSnapshot } from '../net/room'
 import { MAX_PLAYERS } from '../net/types'
+import { DifficultyPicker } from './DifficultyPicker'
 
 export function LobbyScreen({ snapshot }: { snapshot: RoomSnapshot }) {
   const [copied, setCopied] = useState(false)
@@ -56,6 +57,13 @@ export function LobbyScreen({ snapshot }: { snapshot: RoomSnapshot }) {
             </div>
           ))}
         </div>
+
+        <DifficultyPicker
+          value={snapshot.difficulty}
+          onChange={(difficulty) => room.setDifficulty(difficulty)}
+          readOnly={!snapshot.isHost}
+          label="Race speed"
+        />
 
         {snapshot.raceInProgress ? (
           <p className="waiting">A race is already running · you join the next round</p>

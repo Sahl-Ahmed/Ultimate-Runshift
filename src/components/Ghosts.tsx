@@ -3,7 +3,7 @@ import { useFrame } from '@react-three/fiber'
 import * as THREE from 'three'
 import { game, speedForDistance } from '../game/state'
 import { outfitForSlot } from '../net/identity'
-import { room, staggerForSlot } from '../net/room'
+import { room } from '../net/room'
 import type { RoomPlayer } from '../net/types'
 import { BOX, mat } from '../three/resources'
 import { Runner, type RunnerPose } from './Runner'
@@ -37,14 +37,13 @@ function Ghost({ player }: { player: RoomPlayer }) {
   )
   const marker = useMemo(() => ({ ref: null as THREE.Object3D | null }), [])
   const outfit = outfitForSlot(player.slot)
-  const stagger = staggerForSlot(player.slot)
 
   useFrame((_, rawDelta) => {
     const delta = Math.min(rawDelta, 1 / 30)
 
-    // Position relative to the local camera anchor. The stagger is purely
-    // visual - scores are always each player's own distance.
-    const targetZ = player.distance + stagger - (game.viewDistance + game.stagger)
+    // Position relative to the local camera anchor: everyone races from the
+    // same start line, so whoever is ahead is literally ahead on screen.
+    const targetZ = player.distance - game.viewDistance
     const targetY = game.groundY + player.jumpY
 
     pose.x = THREE.MathUtils.damp(pose.x, player.x, 14, delta)
@@ -52,7 +51,7 @@ function Ghost({ player }: { player: RoomPlayer }) {
     pose.z = THREE.MathUtils.damp(pose.z, targetZ, 10, delta)
     pose.onGround = player.jumpY <= 0.02
     pose.running = player.alive
-    pose.speed = speedForDistance(player.distance)
+    pose.speed = speedForDistance(player.distance, game.difficulty)
     pose.drift = 0
     if (player.alive) pose.runTime += delta
 

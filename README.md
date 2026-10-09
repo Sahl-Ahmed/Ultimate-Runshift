@@ -24,13 +24,14 @@ npm run preview   # serve the production build
 
 One player picks **Create Room** and gets a 5-character code; everyone else picks
 **Join Room** and types it in. Each player gets a random name and their own outfit
-colour, and all five line up on a staggered marathon grid.
+colour, and all five line up on the same start line, each in their own lane, so
+the whole field is on screen together from the first second.
 
 - **Everyone runs the same track.** The host picks a seed for each round and the
   level generator is fully deterministic, so all five PCs build an identical track.
   A fresh seed every round means the same room never replays the same track.
-- **The stagger is cosmetic.** Scoring is always each player's own distance, so
-  starting further forward is no advantage.
+- **The host picks the speed preset** for the room, and it is sent with the start
+  signal, so everyone races on the same settings.
 - **Crashing freezes your score** and switches you to spectating — the camera
   follows whoever is still running.
 - **Once only one runner is left, the race is called after 3 seconds**, so the
@@ -84,8 +85,24 @@ inside Supabase's free tier.
 
 - The character runs forward automatically across **five lanes** and can never leave them.
 - Score grows with distance travelled; the best score is kept in `localStorage`.
-- Speed ramps gradually from 11 up to a cap of 34 units/s, so the game gets harder the
-  longer you survive. The HUD shows the current speed and a difficulty bar.
+- Speed climbs the longer you survive. The HUD shows the current speed, the
+  preset and a progress bar toward top speed.
+
+### Speed presets
+
+Pick one before starting (solo: on the menu; multiplayer: the host picks for the
+room). Speed grows as `start × e^(accel × seconds)`, so it builds smoothly rather
+than in steps.
+
+| Preset | Start | Top | At 30s | Reaches top |
+| --- | --- | --- | --- | --- |
+| Normal | 11 | 28 | 17.8 | ~58s |
+| Medium | 15 | 36 | 27.3 | ~44s |
+| Extreme | 19 | 44 | 40.2 | ~33s |
+
+Your solo choice is remembered in `localStorage`. The numbers live in
+`DIFFICULTIES` in [src/game/constants.ts](src/game/constants.ts) if you want to
+tune them.
 - Hitting an obstacle ends the run and shows the final score, the best score and a
   restart button.
 

@@ -1,16 +1,17 @@
 import {
   BASE_SPEED,
   BEST_SCORE_KEY,
+  DEFAULT_DIFFICULTY,
+  DIFFICULTIES,
+  DIFFICULTY_KEY,
   JUMP_VELOCITY,
   LANE_COUNT,
   LANE_X,
-  MAX_SPEED,
   SCORE_PER_UNIT,
-  SPEED_PER_DISTANCE,
 } from './constants'
 import { randomSeed } from './rng'
 import { track } from './track'
-import type { Biome, Phase } from './types'
+import type { Biome, Difficulty, Phase } from './types'
 
 /**
  * Mutable, per-frame game state. This is deliberately *not* React state:
@@ -25,8 +26,8 @@ export interface GameState {
   multiplayer: boolean
   /** Seed the current run's track was built from. */
   seed: number
-  /** Visual marathon head start for this player. Never affects the score. */
-  stagger: number
+  /** Speed preset for this run. In a race everyone shares the host's choice. */
+  difficulty: Difficulty
   /** Distance travelled in world units. */
   distance: number
   /**
@@ -56,7 +57,7 @@ export const game: GameState = {
   alive: true,
   multiplayer: false,
   seed: 0,
-  stagger: 0,
+  difficulty: DEFAULT_DIFFICULTY,
   distance: 0,
   viewDistance: 0,
   speed: BASE_SPEED,
@@ -75,8 +76,36 @@ export function currentScore(): number {
   return Math.floor(game.distance * SCORE_PER_UNIT)
 }
 
-export function speedForDistance(distance: number): number {
-  return Math.min(MAX_SPEED, BASE_SPEED + distance * SPEED_PER_DISTANCE)
+export function speedForDistance(distance: number, difficulty: Difficulty = game.difficulty): number {
+  const preset = DIFFICULTIES[difficulty]
+  return Math.min(preset.top, preset.start + distance * preset.accel)
+}
+
+// ------------------------------------------------------- difficulty choice
+function loadDifficulty(): Difficulty {
+  try {
+    const stored = localStorage.getItem(DIFFICULTY_KEY)
+    if (stored === 'normal' || stored === 'medium' || stored === 'extreme') return stored
+  } catch {
+    /* storage can be unavailable */
+  }
+  return DEFAULT_DIFFICULTY
+}
+
+/** The player's own preference, used for solo runs and as the host's default. */
+export function preferredDifficulty(): Difficulty {
+  return snapshot.difficulty
+}
+
+export function setPreferredDifficulty(difficulty: Difficulty) {
+  if (snapshot.difficulty === difficulty) return
+  try {
+    localStorage.setItem(DIFFICULTY_KEY, difficulty)
+  } catch {
+    /* storage can be unavailable */
+  }
+  snapshot = { ...snapshot, difficulty }
+  emit()
 }
 
 // ------------------------------------------------------------ best score
@@ -105,6 +134,8 @@ export interface HudSnapshot {
   best: number
   speed: number
   biome: Biome
+  /** The chosen preset: the player's preference, or the host's in a race. */
+  difficulty: Difficulty
 }
 
 let snapshot: HudSnapshot = {
@@ -113,6 +144,7 @@ let snapshot: HudSnapshot = {
   best: loadBest(),
   speed: BASE_SPEED,
   biome: 'road',
+  difficulty: loadDifficulty(),
 }
 
 const listeners = new Set<() => void>()
@@ -155,7 +187,8 @@ export interface RunOptions {
   seed?: number
   lane?: number
   multiplayer?: boolean
-  stagger?: number
+  /** In a race this is the host's choice, so everyone ramps up together. */
+  difficulty?: Difficulty
 }
 
 export function startRun(options: RunOptions = {}) {
@@ -164,10 +197,10 @@ export function startRun(options: RunOptions = {}) {
   game.alive = true
   game.multiplayer = options.multiplayer ?? false
   game.seed = options.seed ?? randomSeed()
-  game.stagger = options.stagger ?? 0
+  game.difficulty = options.difficulty ?? snapshot.difficulty
   game.distance = 0
   game.viewDistance = 0
-  game.speed = BASE_SPEED
+  game.speed = DIFFICULTIES[game.difficulty].start
   game.lane = lane
   game.x = LANE_X[lane]
   game.jumpY = 0
@@ -180,7 +213,14 @@ export function startRun(options: RunOptions = {}) {
   // Rebuild the world for this run. In a race every player passes the same
   // seed, so everyone gets an identical track.
   track.reset(game.seed)
-  snapshot = { ...snapshot, phase: 'playing', score: 0, speed: BASE_SPEED, biome: 'road' }
+  snapshot = {
+    ...snapshot,
+    phase: 'playing',
+    score: 0,
+    speed: game.speed,
+    biome: 'road',
+    difficulty: game.difficulty,
+  }
   emit()
 }
 

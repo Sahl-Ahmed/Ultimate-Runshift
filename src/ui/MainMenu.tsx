@@ -1,11 +1,13 @@
 import { useState } from 'react'
 import { room } from '../net/room'
 import { isOnlineConfigured } from '../net/transports'
-import { startRun } from '../game/state'
+import { setPreferredDifficulty, startRun } from '../game/state'
+import type { Difficulty } from '../game/types'
 import { Controls } from './Controls'
+import { DifficultyPicker } from './DifficultyPicker'
 import { JoinForm } from './JoinForm'
 
-export function MainMenu({ best }: { best: number }) {
+export function MainMenu({ best, difficulty }: { best: number; difficulty: Difficulty }) {
   const [showJoin, setShowJoin] = useState(false)
 
   return (
@@ -15,6 +17,8 @@ export function MainMenu({ best }: { best: number }) {
         <p className="tagline">Run. Shift. Survive.</p>
 
         <Controls />
+
+        <DifficultyPicker value={difficulty} onChange={setPreferredDifficulty} />
 
         <div className="menu-actions">
           <button className="btn" onClick={() => startRun()}>

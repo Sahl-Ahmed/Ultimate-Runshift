@@ -1,4 +1,4 @@
-import { BASE_SPEED, MAX_SPEED } from '../game/constants'
+import { DIFFICULTIES } from '../game/constants'
 import type { HudSnapshot } from '../game/state'
 
 const BIOME_LABEL: Record<HudSnapshot['biome'], string> = {
@@ -8,7 +8,8 @@ const BIOME_LABEL: Record<HudSnapshot['biome'], string> = {
 }
 
 export function HUD({ snapshot }: { snapshot: HudSnapshot }) {
-  const progress = Math.round(((snapshot.speed - BASE_SPEED) / (MAX_SPEED - BASE_SPEED)) * 100)
+  const preset = DIFFICULTIES[snapshot.difficulty]
+  const progress = Math.round(((snapshot.speed - preset.start) / (preset.top - preset.start)) * 100)
 
   return (
     <div className="hud">
@@ -23,7 +24,7 @@ export function HUD({ snapshot }: { snapshot: HudSnapshot }) {
           Zone <b>{BIOME_LABEL[snapshot.biome]}</b>
         </div>
         <div className="chip">
-          Speed <b>{snapshot.speed.toFixed(1)}</b>
+          Speed <b>{snapshot.speed.toFixed(1)}</b> · {preset.label}
         </div>
         <div className="speed-meter" title={`Difficulty ${progress}%`}>
           <span style={{ width: `${Math.max(2, Math.min(100, progress))}%` }} />

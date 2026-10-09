@@ -1,7 +1,6 @@
-export const MAX_PLAYERS = 5
+import type { Difficulty } from '../game/types'
 
-/** Visual head start between players, like a marathon start grid. */
-export const STAGGER_SPACING = 3.2
+export const MAX_PLAYERS = 5
 
 /** How often a racing client broadcasts its position. */
 export const STATE_HZ = 10
@@ -40,11 +39,13 @@ export type NetMessage =
   /** "I am here" - also asks everyone else to announce themselves back. */
   | { t: 'hello'; id: string; name: string; host: boolean }
   /** Reply to a hello so the newcomer learns about us, and who hosts. */
-  | { t: 'here'; id: string; name: string; racing: boolean; host: boolean }
+  | { t: 'here'; id: string; name: string; racing: boolean; host: boolean; difficulty: Difficulty }
+  /** Host changed the speed preset for the room. */
+  | { t: 'diff'; value: Difficulty }
   | { t: 'beat'; id: string }
   | { t: 'bye'; id: string }
-  /** Host starts the countdown and picks the seed for this round's track. */
-  | { t: 'go'; seed: number }
+  /** Host starts the countdown, fixing this round's track and speed preset. */
+  | { t: 'go'; seed: number; difficulty: Difficulty }
   /** Position update, deliberately short since it goes out 10x a second. */
   | { t: 's'; id: string; d: number; x: number; y: number; a: 0 | 1 }
   /** Final distance, sent once on crash. */

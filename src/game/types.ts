@@ -2,6 +2,9 @@ export type Biome = 'road' | 'railway' | 'river'
 
 export type Phase = 'menu' | 'playing' | 'over'
 
+/** Speed preset chosen before a run starts. */
+export type Difficulty = 'normal' | 'medium' | 'extreme'
+
 export type ObstacleKind =
   // road
   | 'barrier'

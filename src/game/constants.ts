@@ -1,12 +1,21 @@
 /** Tunable game constants. Keeping them in one place makes balancing easy. */
+import type { Difficulty } from './types'
 
 // ---------------------------------------------------------------- lanes
 export const LANE_COUNT = 5
 export const LANE_WIDTH = 2.2
-/** World X position for every lane index (0 = far left, 4 = far right). */
+/**
+ * World X for each lane index, where lane 0 is the one on the LEFT of the
+ * screen and lane 4 is on the right.
+ *
+ * The camera sits behind the player looking toward +Z, and a camera looking
+ * that way has world -X on its right hand side. So screen-left is +X, and the
+ * lane positions run from positive to negative. Getting this backwards is what
+ * makes the left key move the player right.
+ */
 export const LANE_X: number[] = Array.from(
   { length: LANE_COUNT },
-  (_, i) => (i - (LANE_COUNT - 1) / 2) * LANE_WIDTH,
+  (_, i) => ((LANE_COUNT - 1) / 2 - i) * LANE_WIDTH,
 )
 export const TRACK_WIDTH = LANE_COUNT * LANE_WIDTH
 
@@ -26,10 +35,31 @@ export const BIOME_MIN_SEGMENTS = 7
 export const BIOME_MAX_SEGMENTS = 11
 
 // ---------------------------------------------------------------- motion
-export const BASE_SPEED = 11
-export const MAX_SPEED = 34
-/** Speed gained per unit of distance travelled (gradual ramp). */
-export const SPEED_PER_DISTANCE = 0.008
+/**
+ * Speed presets. `accel` is the speed gained per unit of distance, which makes
+ * speed grow as v0 * e^(accel * t) - so "time to reach top speed" is
+ * ln(top / start) / accel. The comments below give that in seconds.
+ */
+export interface SpeedPreset {
+  label: string
+  blurb: string
+  start: number
+  top: number
+  accel: number
+}
+
+export const DIFFICULTIES: Record<Difficulty, SpeedPreset> = {
+  normal: { label: 'Normal', blurb: 'Steady build-up', start: 11, top: 28, accel: 0.016 }, // ~58s to top
+  medium: { label: 'Medium', blurb: 'Quick and punchy', start: 15, top: 36, accel: 0.02 }, //  ~44s
+  extreme: { label: 'Extreme', blurb: 'Flat out, no mercy', start: 19, top: 44, accel: 0.025 }, // ~34s
+}
+
+export const DEFAULT_DIFFICULTY: Difficulty = 'normal'
+export const DIFFICULTY_KEY = 'ultimate-runshift:difficulty'
+
+/** Fallbacks for anything that needs a number before a run has started. */
+export const BASE_SPEED = DIFFICULTIES[DEFAULT_DIFFICULTY].start
+export const MAX_SPEED = DIFFICULTIES[DEFAULT_DIFFICULTY].top
 
 export const GRAVITY = -38
 export const JUMP_VELOCITY = 12.6

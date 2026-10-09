@@ -1,12 +1,13 @@
-﻿import { randomSeed } from '../game/rng'
-import { endRun, game, startRun } from '../game/state'
+﻿import { DEFAULT_DIFFICULTY } from '../game/constants'
+import { randomSeed } from '../game/rng'
+import { endRun, game, preferredDifficulty, startRun } from '../game/state'
+import type { Difficulty } from '../game/types'
 import { normalizeRoomCode, randomId, randomName, randomRoomCode } from './identity'
 import { createLocalTransport, createOnlineTransport, isOnlineConfigured } from './transports'
 import {
   BEAT_MS,
   LAST_RUNNER_MS,
   MAX_PLAYERS,
-  STAGGER_SPACING,
   STATE_HZ,
   TIMEOUT_MS,
   type NetMessage,
@@ -41,6 +42,8 @@ export interface RoomSnapshot {
   /** The code the last join attempt used, so the user can correct it. */
   attemptedCode: string
   countdownEndsAt: number
+  /** Speed preset for this room, chosen by the host. */
+  difficulty: Difficulty
   /** Another round is already running, so this client waits for the next one. */
   raceInProgress: boolean
   /**
@@ -50,10 +53,6 @@ export interface RoomSnapshot {
   finishEndsAt: number
 }
 
-/** Visual head start: slot 0 lines up furthest forward. */
-export function staggerForSlot(slot: number): number {
-  return (MAX_PLAYERS - 1 - slot) * STAGGER_SPACING
-}
 
 class Room {
   private players = new Map<string, RoomPlayer>()
@@ -65,6 +64,8 @@ class Room {
   private selfName = randomName()
   /** Who hosts: set to self when creating a room, learned when joining one. */
   private hostId: string | null = null
+  /** Speed preset for the room: the host's pick, learned by everyone else. */
+  private difficulty: Difficulty = DEFAULT_DIFFICULTY
   private error: string | null = null
   private errorDetail: string | null = null
   private attemptedCode = ''
@@ -111,6 +112,7 @@ class Room {
       errorDetail: this.errorDetail,
       attemptedCode: this.attemptedCode,
       countdownEndsAt: this.countdownEndsAt,
+      difficulty: this.difficulty,
       raceInProgress: Date.now() - this.lastRemoteRaceSignal < 3000,
       finishEndsAt: this.finishEndsAt,
     }
@@ -187,10 +189,21 @@ class Room {
     await this.connect(code, false)
   }
 
+  /** Host only: pick the speed preset everyone in the room will race with. */
+  setDifficulty(difficulty: Difficulty) {
+    if (this.effectiveHostId() !== this.selfId) return
+    if (this.difficulty === difficulty) return
+    this.difficulty = difficulty
+    this.send({ t: 'diff', value: difficulty })
+    this.emit()
+  }
+
   private async connect(code: string, asHost: boolean) {
     this.teardown()
     // Creating the room makes you the host; joining means waiting to be told.
     this.hostId = asHost ? this.selfId : null
+    // The host's own preference becomes the room's, until they change it.
+    this.difficulty = asHost ? preferredDifficulty() : DEFAULT_DIFFICULTY
     this.code = code
     this.kind = isOnlineConfigured ? 'online' : 'local'
     this.status = 'connecting'
@@ -358,6 +371,7 @@ class Room {
           name: this.selfName,
           racing: this.isMultiplayer,
           host: this.effectiveHostId() === this.selfId,
+          difficulty: this.difficulty,
         })
         if (this.canReshuffle()) this.recomputeSlots()
         this.emit()
@@ -366,7 +380,14 @@ class Room {
       case 'here': {
         this.touch(message.id, message.name)
         this.noteHost(message)
+        // Only the host's preset counts.
+        if (message.host) this.difficulty = message.difficulty
         if (this.canReshuffle()) this.recomputeSlots()
+        this.emit()
+        break
+      }
+      case 'diff': {
+        this.difficulty = message.value
         this.emit()
         break
       }
@@ -385,6 +406,8 @@ class Room {
         break
       }
       case 'go': {
+        // The host's message is authoritative for both track and speed.
+        this.difficulty = message.difficulty
         this.beginCountdown(message.seed)
         break
       }
@@ -469,7 +492,7 @@ class Room {
     if (this.status !== 'lobby' || this.getSnapshot().raceInProgress) return
     // A fresh seed per round, so the same room never replays the same track.
     const seed = randomSeed()
-    this.send({ t: 'go', seed })
+    this.send({ t: 'go', seed, difficulty: this.difficulty })
     this.beginCountdown(seed)
   }
 
@@ -496,8 +519,10 @@ class Room {
       const self = this.self()
       startRun({
         seed: this.raceSeed,
+        // Everyone starts on the same line, in their own lane, so the whole
+        // field is on screen together.
         lane: self ? Math.min(MAX_PLAYERS - 1, self.slot) : 2,
-        stagger: staggerForSlot(self ? self.slot : 0),
+        difficulty: this.difficulty,
         multiplayer: true,
       })
       this.emit()

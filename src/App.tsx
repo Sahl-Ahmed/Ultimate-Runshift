@@ -31,7 +31,7 @@ export default function App() {
       <div className="ui-layer">
         {/* ---------------- solo flow ---------------- */}
         {solo && hud.phase === 'playing' && <HUD snapshot={hud} />}
-        {solo && hud.phase === 'menu' && <MainMenu best={hud.best} />}
+        {solo && hud.phase === 'menu' && <MainMenu best={hud.best} difficulty={hud.difficulty} />}
         {solo && hud.phase === 'over' && <GameOverScreen score={hud.score} best={hud.best} />}
 
         {/* ---------------- room flow ---------------- */}
