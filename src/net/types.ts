@@ -1,10 +1,19 @@
 import type { Difficulty } from '../game/types'
 
-export const MAX_PLAYERS = 15
+export const MAX_PLAYERS = 10
 
-/** How often a racing client broadcasts its position. */
-export const STATE_HZ = 10
-/** Heartbeat interval while sitting in the lobby. */
+/**
+ * How often a racing client broadcasts its position.
+ *
+ * Six a second is the sweet spot here: other runners are purely cosmetic (no
+ * player collision, and your score is your own distance), so a slightly
+ * softer ghost costs nothing, while the saving over ten a second is real.
+ */
+export const STATE_HZ = 6
+/**
+ * Heartbeat interval. Only used when NOT racing - during a race the position
+ * updates already prove a player is alive, so a separate beat is pure waste.
+ */
 export const BEAT_MS = 1000
 /** A player we have not heard from for this long is dropped. */
 export const TIMEOUT_MS = 5000

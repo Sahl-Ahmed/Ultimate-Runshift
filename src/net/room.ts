@@ -353,10 +353,13 @@ class Room {
     // Heartbeats run on a plain timer, not the render loop: a player who
     // switches tabs has their animation frames paused by the browser, and
     // should stay in the roster (frozen) instead of being dropped.
+    //
+    // They are skipped while racing, because position updates arrive several
+    // times a second and already refresh `lastSeen`. They do keep running
+    // through the countdown, where no position updates are sent yet.
     this.beatTimer = window.setInterval(() => {
-      if (this.status !== 'idle' && this.status !== 'error') {
-        this.send({ t: 'beat', id: this.selfId })
-      }
+      if (this.status === 'idle' || this.status === 'error' || this.status === 'racing') return
+      this.send({ t: 'beat', id: this.selfId })
     }, BEAT_MS)
 
     // Position updates, for the same reason.

@@ -20,7 +20,7 @@ npm run build     # typecheck + production build into dist/
 npm run preview   # serve the production build
 ```
 
-## Multiplayer (up to 15 players)
+## Multiplayer (up to 10 players)
 
 One player picks **Create Room** and gets a 5-character code; everyone else picks
 **Join Room** and types it in. Each player gets a random name and their own outfit
@@ -79,9 +79,22 @@ mode**, which connects browser tabs on the same PC through a `BroadcastChannel` 
 handy for testing the whole flow on your own before a real session. The menu
 tells you which mode is active.
 
-A race sends about 10 small messages per second per player. A three minute race
-with a full room of 15 is roughly 27,000 messages, which sits comfortably inside
-Supabase's free monthly allowance.
+### What it costs
+
+Each racing player broadcasts its position **6 times a second**, and the room
+is quiet otherwise - during a race the position updates already prove a player
+is alive, so no separate heartbeat is sent. Supabase counts a broadcast once
+per recipient, so the cost grows with the square of the room size:
+
+| Players | Messages per 3 min match | Matches per month on the free 2M |
+| --- | --- | --- |
+| Solo | 0 (never connects) | unlimited |
+| 2 | 2,400 | ~830 |
+| 4 | 14,400 | ~138 |
+| 6 | 36,000 | ~55 |
+| 10 | 108,000 | ~18 |
+
+Solo play never touches the network at all.
 
 ## Controls
 
