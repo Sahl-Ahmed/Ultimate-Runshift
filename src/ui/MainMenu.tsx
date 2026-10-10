@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { room } from '../net/room'
-import { isOnlineConfigured } from '../net/transports'
+import { MAX_PLAYERS } from '../net/types'
+import { transportLabel } from '../net/transports'
 import { setPreferredDifficulty, startRun } from '../game/state'
 import type { Difficulty } from '../game/types'
 import { Controls } from './Controls'
@@ -38,7 +39,7 @@ export function MainMenu({ best, difficulty }: { best: number; difficulty: Diffi
 
         <p className="footnote">
           {best > 0 ? `Best score ${best.toLocaleString()} · ` : ''}
-          Up to 5 players · {isOnlineConfigured ? 'Online play ready' : 'Local mode: same PC, extra browser tabs'}
+          Up to {MAX_PLAYERS} players · {transportLabel()}
         </p>
       </div>
     </div>

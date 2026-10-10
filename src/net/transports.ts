@@ -83,6 +83,16 @@ function websocketUrl(base: string, roomCode: string): string {
 export const isRelayConfigured = Boolean(WS_URL)
 
 /**
+ * Which transport this build will actually use, so the menu can say so.
+ * Handy for confirming a deploy really picked up its environment variables.
+ */
+export function transportLabel(): string {
+  if (isRelayConfigured) return 'Own server'
+  if (isOnlineConfigured) return 'Supabase'
+  return 'Local mode: same PC, extra browser tabs'
+}
+
+/**
  * The game's own relay server. Unlike Supabase this is billed by bandwidth
  * rather than per message, so rooms cost almost nothing to run.
  *
