@@ -5,11 +5,12 @@ export const MAX_PLAYERS = 10
 /**
  * How often a racing client broadcasts its position.
  *
- * Six a second is the sweet spot here: other runners are purely cosmetic (no
- * player collision, and your score is your own distance), so a slightly
- * softer ghost costs nothing, while the saving over ten a second is real.
+ * Five a second, tested by eye against ten: other runners are purely cosmetic
+ * (no player collision, and your score is your own distance) and the ghosts
+ * are damped between updates, so the lower rate is not noticeable while the
+ * saving is real.
  */
-export const STATE_HZ = 6
+export const STATE_HZ = 5
 /**
  * Heartbeat interval. Only used when NOT racing - during a race the position
  * updates already prove a player is alive, so a separate beat is pure waste.

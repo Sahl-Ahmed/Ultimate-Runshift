@@ -81,7 +81,7 @@ tells you which mode is active.
 
 ### What it costs
 
-Each racing player broadcasts its position **6 times a second**, and the room
+Each racing player broadcasts its position **5 times a second**, and the room
 is quiet otherwise - during a race the position updates already prove a player
 is alive, so no separate heartbeat is sent. Supabase counts a broadcast once
 per recipient, so the cost grows with the square of the room size:
@@ -89,10 +89,10 @@ per recipient, so the cost grows with the square of the room size:
 | Players | Messages per 3 min match | Matches per month on the free 2M |
 | --- | --- | --- |
 | Solo | 0 (never connects) | unlimited |
-| 2 | 2,400 | ~830 |
-| 4 | 14,400 | ~138 |
-| 6 | 36,000 | ~55 |
-| 10 | 108,000 | ~18 |
+| 2 | 2,040 | ~980 |
+| 4 | 12,240 | ~163 |
+| 6 | 30,600 | ~65 |
+| 10 | 91,800 | ~21 |
 
 Solo play never touches the network at all.
 
