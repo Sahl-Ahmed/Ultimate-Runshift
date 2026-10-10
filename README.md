@@ -5,6 +5,7 @@
 A browser-based low-poly 3D endless runner built as a class project with Vite + React +
 TypeScript + Three.js (`@react-three/fiber` / `@react-three/drei`). The look is deliberately
 blocky and Minecraft-ish: boxes, cylinders, flat colours, two lights, no external assets.
+Own server check <https://runshift-server.onrender.com/health>
 
 ## Running it
 
