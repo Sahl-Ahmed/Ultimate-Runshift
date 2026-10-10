@@ -28,7 +28,13 @@ const server = createServer((req, res) => {
   // Health check, also used by uptime pingers to keep the instance awake.
   if (req.url === '/health' || req.url === '/') {
     const players = [...rooms.values()].reduce((n, set) => n + set.size, 0)
-    res.writeHead(200, { 'content-type': 'application/json' })
+    // Readable from the game page, which pings it on load to wake the
+    // instance before anyone actually clicks Create Room.
+    res.writeHead(200, {
+      'content-type': 'application/json',
+      'access-control-allow-origin': '*',
+      'cache-control': 'no-store',
+    })
     res.end(JSON.stringify({ ok: true, rooms: rooms.size, players }))
     return
   }

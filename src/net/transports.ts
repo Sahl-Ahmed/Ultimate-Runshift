@@ -86,6 +86,24 @@ export const isRelayConfigured = Boolean(WS_URL)
  * Which transport this build will actually use, so the menu can say so.
  * Handy for confirming a deploy really picked up its environment variables.
  */
+/**
+ * Pokes the relay so a sleeping free instance starts waking up immediately,
+ * rather than only when someone opens a room. Players spend a few seconds on
+ * the menu anyway, which is usually enough to cover the whole cold start.
+ *
+ * Fire and forget: a failure here means nothing, the room connection will
+ * report any real problem.
+ */
+let woken = false
+
+export function wakeRelay(): void {
+  if (!WS_URL || woken) return
+  woken = true
+  const base = WS_URL.trim().replace(/\/+$/, '').replace(/^wss:/, 'https:').replace(/^ws:/, 'http:')
+  const url = /^https?:/.test(base) ? base : `https://${base}`
+  void fetch(`${url}/health`, { mode: 'cors', cache: 'no-store' }).catch(() => {})
+}
+
 export function transportLabel(): string {
   if (isRelayConfigured) return 'Own server'
   if (isOnlineConfigured) return 'Supabase'

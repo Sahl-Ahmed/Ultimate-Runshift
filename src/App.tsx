@@ -1,8 +1,9 @@
-import { useSyncExternalStore } from 'react'
+import { useEffect, useSyncExternalStore } from 'react'
 import { GameCanvas } from './components/GameCanvas'
 import { game, hudStore } from './game/state'
 import { useKeyboard } from './game/useKeyboard'
 import { room } from './net/room'
+import { wakeRelay } from './net/transports'
 import { GameOverScreen } from './ui/GameOverScreen'
 import { HUD } from './ui/HUD'
 import { LobbyScreen } from './ui/LobbyScreen'
@@ -20,6 +21,8 @@ import './ui/ui.css'
 
 export default function App() {
   useKeyboard()
+  // Start waking the relay while the player is still reading the menu.
+  useEffect(() => wakeRelay(), [])
   const hud = useSyncExternalStore(hudStore.subscribe, hudStore.getSnapshot)
   const net = useSyncExternalStore(room.subscribe, room.getSnapshot)
 
