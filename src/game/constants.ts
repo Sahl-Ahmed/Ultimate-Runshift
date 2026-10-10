@@ -24,10 +24,13 @@ export const TRACK_WIDTH = LANE_COUNT * LANE_WIDTH
 export const SEGMENT_LENGTH = 24
 /** How many segments are kept alive in front of the player. */
 export const SEGMENTS_AHEAD = 13
-/** Segments whose far edge passed this Z are recycled. */
-export const DESPAWN_Z = -34
-/** Segments at the start of a run that are guaranteed obstacle free. */
-export const WARMUP_SEGMENTS = 2
+/**
+ * Segments whose far edge passed this Z are recycled. Kept well behind the
+ * player so the rear view (hold B) has something to look at.
+ */
+export const DESPAWN_Z = -75
+/** Seconds at the start of a run with no obstacles, to get set. */
+export const WARMUP_SECONDS = 5
 
 // ---------------------------------------------------------------- biomes
 /** Min / max number of segments a biome lasts before the next one starts. */
@@ -49,9 +52,9 @@ export interface SpeedPreset {
 }
 
 export const DIFFICULTIES: Record<Difficulty, SpeedPreset> = {
-  normal: { label: 'Normal', blurb: 'Steady build-up', start: 11, top: 28, accel: 0.016 }, // ~58s to top
-  medium: { label: 'Medium', blurb: 'Quick and punchy', start: 15, top: 36, accel: 0.02 }, //  ~44s
-  extreme: { label: 'Extreme', blurb: 'Flat out, no mercy', start: 19, top: 44, accel: 0.025 }, // ~34s
+  normal: { label: 'Normal', blurb: 'Long climb to 100', start: 5, top: 100, accel: 0.03 }, // 100s to top
+  medium: { label: 'Medium', blurb: 'Hard and fast', start: 15, top: 100, accel: 0.035 }, //   54s
+  extreme: { label: 'Extreme', blurb: 'No mercy', start: 25, top: 100, accel: 0.04 }, //       35s
 }
 
 export const DEFAULT_DIFFICULTY: Difficulty = 'normal'

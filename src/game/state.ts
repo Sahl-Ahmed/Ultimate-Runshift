@@ -8,6 +8,7 @@ import {
   LANE_COUNT,
   LANE_X,
   SCORE_PER_UNIT,
+  WARMUP_SECONDS,
 } from './constants'
 import { randomSeed } from './rng'
 import { track } from './track'
@@ -37,6 +38,11 @@ export interface GameState {
   viewDistance: number
   speed: number
   lane: number
+  /**
+   * Sideways nudge inside the lane, so players sharing a lane fan out instead
+   * of standing inside each other.
+   */
+  laneOffset: number
   /** Smoothed X position of the player. */
   x: number
   /** Height above the current ground level. */
@@ -50,6 +56,8 @@ export interface GameState {
   boat: number
   /** Seconds since the run started, used to drive the run cycle. */
   runTime: number
+  /** True while the rear view key is held. */
+  lookBack: boolean
 }
 
 export const game: GameState = {
@@ -62,6 +70,7 @@ export const game: GameState = {
   viewDistance: 0,
   speed: BASE_SPEED,
   lane: 2,
+  laneOffset: 0,
   x: LANE_X[2],
   jumpY: 0,
   velocityY: 0,
@@ -70,6 +79,7 @@ export const game: GameState = {
   biome: 'road',
   boat: 0,
   runTime: 0,
+  lookBack: false,
 }
 
 export function currentScore(): number {
@@ -79,6 +89,20 @@ export function currentScore(): number {
 export function speedForDistance(distance: number, difficulty: Difficulty = game.difficulty): number {
   const preset = DIFFICULTIES[difficulty]
   return Math.min(preset.top, preset.start + distance * preset.accel)
+}
+
+/**
+ * How far the player travels in the first `seconds` of a run. Used to size the
+ * obstacle-free zone at the start, which is a time for the player but a
+ * distance for the track generator.
+ */
+export function distanceAfterSeconds(difficulty: Difficulty, seconds: number): number {
+  const step = 1 / 60
+  let distance = 0
+  for (let t = 0; t < seconds; t += step) {
+    distance += speedForDistance(distance, difficulty) * step
+  }
+  return distance
 }
 
 // ------------------------------------------------------- difficulty choice
@@ -186,6 +210,8 @@ export interface RunOptions {
   /** Shared across a room so every player gets an identical track. */
   seed?: number
   lane?: number
+  /** Sideways nudge so players sharing a lane do not stand inside each other. */
+  laneOffset?: number
   multiplayer?: boolean
   /** In a race this is the host's choice, so everyone ramps up together. */
   difficulty?: Difficulty
@@ -202,7 +228,8 @@ export function startRun(options: RunOptions = {}) {
   game.viewDistance = 0
   game.speed = DIFFICULTIES[game.difficulty].start
   game.lane = lane
-  game.x = LANE_X[lane]
+  game.laneOffset = options.laneOffset ?? 0
+  game.x = LANE_X[lane] + game.laneOffset
   game.jumpY = 0
   game.velocityY = 0
   game.onGround = true
@@ -210,9 +237,11 @@ export function startRun(options: RunOptions = {}) {
   game.biome = 'road'
   game.boat = 0
   game.runTime = 0
+  game.lookBack = false
   // Rebuild the world for this run. In a race every player passes the same
-  // seed, so everyone gets an identical track.
-  track.reset(game.seed)
+  // seed, so everyone gets an identical track. The warm-up is given in
+  // seconds but the generator needs a distance, which depends on the preset.
+  track.reset(game.seed, distanceAfterSeconds(game.difficulty, WARMUP_SECONDS))
   snapshot = {
     ...snapshot,
     phase: 'playing',

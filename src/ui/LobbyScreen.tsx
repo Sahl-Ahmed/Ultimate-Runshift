@@ -46,16 +46,20 @@ export function LobbyScreen({ snapshot }: { snapshot: RoomSnapshot }) {
                   {player.isSelf && <em className="tag you">You</em>}
                   {player.id === snapshot.hostId && <em className="tag host">Host</em>}
                 </span>
-                <span className="player-grid">Grid {player.slot + 1}</span>
+                <span className="player-grid">Lane {(player.slot % 5) + 1}</span>
               </div>
             )
           })}
-          {Array.from({ length: MAX_PLAYERS - snapshot.players.length }, (_, i) => (
-            <div className="player-row empty" key={`empty-${i}`}>
-              <span className="dot" />
-              <span className="player-name">Waiting for a player…</span>
-            </div>
-          ))}
+          {/* Just a couple of placeholders - 14 empty rows would bury the list. */}
+          {Array.from(
+            { length: Math.min(2, MAX_PLAYERS - snapshot.players.length) },
+            (_, i) => (
+              <div className="player-row empty" key={`empty-${i}`}>
+                <span className="dot" />
+                <span className="player-name">Waiting for a player…</span>
+              </div>
+            ),
+          )}
         </div>
 
         <DifficultyPicker

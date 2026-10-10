@@ -1,4 +1,4 @@
-﻿import { DEFAULT_DIFFICULTY } from '../game/constants'
+﻿import { DEFAULT_DIFFICULTY, LANE_COUNT } from '../game/constants'
 import { randomSeed } from '../game/rng'
 import { endRun, game, preferredDifficulty, startRun } from '../game/state'
 import type { Difficulty } from '../game/types'
@@ -15,6 +15,28 @@ import {
   type Transport,
   type TransportKind,
 } from './types'
+
+/**
+ * Sideways gap between players who share a lane. A lane is 2.2 wide and a
+ * runner about 0.84, so three fit across it while staying inside the lane.
+ */
+const LANE_FAN_SPACING = 0.5
+
+/**
+ * Where a player lines up. Slots are handed out 0..N-1, so lanes fill round
+ * robin: the first five take a lane each, the next five double up, and so on.
+ * Everyone stands on the same start line; players sharing a lane fan out
+ * sideways instead of standing inside each other.
+ *
+ * Derived purely from the slot and the head count, so every client works out
+ * the same layout without sending anything.
+ */
+export function laneLayout(slot: number, playerCount: number): { lane: number; offset: number } {
+  const lane = slot % LANE_COUNT
+  const indexInLane = Math.floor(slot / LANE_COUNT)
+  const occupants = Math.max(1, Math.ceil((playerCount - lane) / LANE_COUNT))
+  return { lane, offset: (indexInLane - (occupants - 1) / 2) * LANE_FAN_SPACING }
+}
 
 export type RoomStatus = 'idle' | 'connecting' | 'lobby' | 'countdown' | 'racing' | 'results' | 'error'
 
@@ -74,6 +96,8 @@ class Room {
   private raceSeed = 0
   /** Last time a position update arrived while we were not racing. */
   private lastRemoteRaceSignal = 0
+  /** Set when a reply during discovery says the room is mid-race. */
+  private sawRaceInProgress = false
   /** When the last-runner countdown ends (0 = not running). */
   private finishEndsAt = 0
   private finishTimer: number | null = null
@@ -209,6 +233,7 @@ class Room {
     this.status = 'connecting'
     this.error = null
     this.errorDetail = null
+    this.sawRaceInProgress = false
     this.emit()
 
     const handle = (message: NetMessage) => this.receive(message)
@@ -245,6 +270,16 @@ class Room {
         this.fail('No room found', `Nobody is hosting room ${code}. Check the code, or create a room yourself.`)
         return
       }
+    }
+
+    if (!asHost && this.sawRaceInProgress) {
+      // The race is under way, so the room is closed until it finishes.
+      this.send({ t: 'bye', id: this.selfId })
+      this.fail(
+        'Run already started',
+        `Room ${code} is mid-race. Ask the host for a new code once the round is over.`,
+      )
+      return
     }
 
     if (this.players.size > MAX_PLAYERS) {
@@ -380,6 +415,7 @@ class Room {
       case 'here': {
         this.touch(message.id, message.name)
         this.noteHost(message)
+        if (message.racing) this.sawRaceInProgress = true
         // Only the host's preset counts.
         if (message.host) this.difficulty = message.difficulty
         if (this.canReshuffle()) this.recomputeSlots()
@@ -517,11 +553,13 @@ class Room {
       if (this.status !== 'countdown') return
       this.status = 'racing'
       const self = this.self()
+      const layout = laneLayout(self ? self.slot : 0, this.players.size)
       startRun({
         seed: this.raceSeed,
-        // Everyone starts on the same line, in their own lane, so the whole
-        // field is on screen together.
-        lane: self ? Math.min(MAX_PLAYERS - 1, self.slot) : 2,
+        // Everyone starts on the same line. Lanes fill round robin and players
+        // sharing one fan out, so the whole field is visible side by side.
+        lane: layout.lane,
+        laneOffset: layout.offset,
         difficulty: this.difficulty,
         multiplayer: true,
       })

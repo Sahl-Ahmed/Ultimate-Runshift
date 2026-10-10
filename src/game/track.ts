@@ -7,7 +7,6 @@ import {
   SEGMENTS_AHEAD,
   SEGMENT_LENGTH,
   TRACK_WIDTH,
-  WARMUP_SEGMENTS,
 } from './constants'
 import type { Biome, ObstacleKind, PropKind, Segment } from './types'
 import { mulberry32, randomSeed, rngInt, rngPick, rngRange, type Rng } from './rng'
@@ -63,6 +62,8 @@ class TrackManager {
   private rng: Rng = mulberry32(0)
   private nextIndex = 0
   private nextZ = 0
+  /** No obstacles are placed until the player has covered this distance. */
+  private warmupDistance = 0
   private biome: Biome = 'road'
   private biomeLeft = 0
   /** World Z of the last obstacle row, used to keep rows fairly spaced. */
@@ -91,7 +92,8 @@ class TrackManager {
    * identical track, because segments are always generated in index order and
    * therefore consume the random stream in the same order everywhere.
    */
-  reset(seed: number = randomSeed()) {
+  reset(seed: number = randomSeed(), warmupDistance = 0) {
+    this.warmupDistance = warmupDistance
     this.seed = seed >>> 0
     this.rng = mulberry32(this.seed)
     this.segments = []
@@ -154,10 +156,7 @@ class TrackManager {
       props: [],
     }
 
-    // The first couple of segments stay clear so the run never starts unfair.
-    if (this.nextIndex >= WARMUP_SEGMENTS) {
-      this.buildObstacles(segment)
-    }
+    this.buildObstacles(segment)
     this.buildProps(segment)
 
     this.segments.push(segment)
@@ -186,6 +185,10 @@ class TrackManager {
       const worldZ = segment.z + localZ
       if (worldZ - this.lastRowZ < MIN_ROW_GAP) continue
       if (this.rng() > 0.55 + difficulty * 0.3) continue
+      // Segment `i` reaches the player after (i - 1) * SEGMENT_LENGTH of
+      // travel, since segment 0 sits one length behind the start line. Rows
+      // the player would meet during the warm-up are skipped entirely.
+      if ((segment.index - 1) * SEGMENT_LENGTH + localZ < this.warmupDistance) continue
 
       this.buildRow(segment, localZ, difficulty)
       this.lastRowZ = worldZ

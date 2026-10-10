@@ -20,12 +20,18 @@ npm run build     # typecheck + production build into dist/
 npm run preview   # serve the production build
 ```
 
-## Multiplayer (up to 5 players)
+## Multiplayer (up to 15 players)
 
 One player picks **Create Room** and gets a 5-character code; everyone else picks
 **Join Room** and types it in. Each player gets a random name and their own outfit
-colour, and all five line up on the same start line, each in their own lane, so
-the whole field is on screen together from the first second.
+colour, and everyone lines up on the same start line so the whole field is on
+screen together from the first second.
+
+Lanes fill round robin: the first five players take a lane each, the next five
+double up, and so on. Players sharing a lane fan out sideways by a few
+centimetres rather than standing inside each other, your own runner is drawn
+solid while everyone else is faded, and a marker floats above your head - so
+you can always pick yourself out of the crowd.
 
 - **Everyone runs the same track.** The host picks a seed for each round and the
   level generator is fully deterministic, so all five PCs build an identical track.
@@ -36,9 +42,13 @@ the whole field is on screen together from the first second.
   follows whoever is still running.
 - **Once only one runner is left, the race is called after 3 seconds**, so the
   winner is not left running alone while everyone waits. Everyone sees the
-  countdown, then the full 1st–5th placing.
+  countdown, then the full placing.
 - A live leaderboard shows the running order during the race.
-- Someone who joins mid-race waits in the lobby for the next round.
+- **The room locks when the race starts.** Anyone who tries the code after that
+  is told the run already started, and waits for a fresh round.
+- **Switching tabs does not stop you.** The simulation is driven by a worker
+  clock, so a player who alt-tabs keeps running (and can still crash) rather
+  than freezing mid-track.
 
 Joining tells you what went wrong, and lets you fix the code on the spot:
 
@@ -69,8 +79,9 @@ mode**, which connects browser tabs on the same PC through a `BroadcastChannel` 
 handy for testing the whole flow on your own before a real session. The menu
 tells you which mode is active.
 
-A race sends about 10 small messages per second per player, which stays well
-inside Supabase's free tier.
+A race sends about 10 small messages per second per player. A three minute race
+with a full room of 15 is roughly 27,000 messages, which sits comfortably inside
+Supabase's free monthly allowance.
 
 ## Controls
 
@@ -79,14 +90,16 @@ inside Supabase's free tier.
 | `A` / `←` | Move one lane left |
 | `D` / `→` | Move one lane right |
 | `Space` | Jump |
+| `B` (hold) | Look behind you |
 | `R` / `Enter` / `Space` | Start or restart |
 
 ## Gameplay
 
 - The character runs forward automatically across **five lanes** and can never leave them.
 - Score grows with distance travelled; the best score is kept in `localStorage`.
-- Speed climbs the longer you survive. The HUD shows the current speed, the
-  preset and a progress bar toward top speed.
+- Speed climbs the longer you survive, all the way to 100 units/s, at which
+  point surviving is no longer really the point. The HUD shows the current
+  speed, the preset and a progress bar toward top speed.
 
 ### Speed presets
 
@@ -94,11 +107,14 @@ Pick one before starting (solo: on the menu; multiplayer: the host picks for the
 room). Speed grows as `start × e^(accel × seconds)`, so it builds smoothly rather
 than in steps.
 
-| Preset | Start | Top | At 30s | Reaches top |
-| --- | --- | --- | --- | --- |
-| Normal | 11 | 28 | 17.8 | ~58s |
-| Medium | 15 | 36 | 27.3 | ~44s |
-| Extreme | 19 | 44 | 40.2 | ~33s |
+| Preset | Start | Top | At 30s | At 60s | Reaches top |
+| --- | --- | --- | --- | --- | --- |
+| Normal | 5 | 100 | 12.3 | 30.2 | ~100s |
+| Medium | 15 | 100 | 42.9 | 100 | ~54s |
+| Extreme | 25 | 100 | 83.0 | 100 | ~35s |
+
+The first **5 seconds of every run are obstacle free**, so there is time to get
+settled before anything can hit you.
 
 Your solo choice is remembered in `localStorage`. The numbers live in
 `DIFFICULTIES` in [src/game/constants.ts](src/game/constants.ts) if you want to
@@ -129,7 +145,9 @@ src/
     rng.ts          seeded PRNG, so a room's track is identical everywhere
     state.ts        mutable per-frame game state + throttled HUD store
     track.ts        procedural segment generation, biomes, recycling
-    collision.ts    axis-aligned player/obstacle test
+    collision.ts    swept player/obstacle test
+    simulate.ts     fixed-timestep world step, driven by frames and the worker
+    clock.worker.ts worker metronome, so a hidden tab keeps simulating
     useKeyboard.ts  key bindings
   net/
     types.ts        message shapes and tuning (max players, tick rates)
@@ -138,7 +156,7 @@ src/
     room.ts         roster, slots, host election, countdown, ranking
   components/
     GameCanvas.tsx  canvas, lights, fog
-    GameLoop.tsx    the single per-frame simulation authority + camera
+    GameLoop.tsx    drives the simulation and owns the camera
     Track.tsx       renders the live segment list
     segments/       road / railway / river segment visuals
     Obstacle.tsx    every obstacle kind
@@ -158,8 +176,13 @@ src/
 - The player never actually moves along Z. The track scrolls toward the player instead,
   which keeps floating point precision stable for an endless run and makes collision a
   simple test against obstacles near `z = 0`.
-- `GameLoop` is the only place that simulates: movement, gravity, biome tracking,
-  collision and the camera. Every other component just reads state.
+- The simulation lives in `simulate.ts` on a fixed 1/60 timestep, and is driven
+  from two places: the render loop, and a worker clock that keeps ticking while
+  the page is hidden. Whichever fires first does the work, so a backgrounded
+  player keeps running. `GameLoop` then only owns the camera.
+- Collision is swept, not instantaneous. At 100 units/s one step covers more
+  ground than a thin obstacle is deep, so each obstacle is tested against the
+  whole span it crossed during the step instead of just where it ended up.
 - Game state lives in a plain mutable object, not React state. React re-renders only when
   segments spawn/recycle and when the throttled HUD snapshot changes, so the render loop
   stays allocation free.
@@ -170,7 +193,10 @@ src/
   switches tabs (which pauses animation frames) stays in the roster instead of
   being dropped.
 - Player slots come from the sorted client ids, so every client independently
-  derives the same colours and grid positions with no negotiation.
+  derives the same colours and lane positions with no negotiation. The lane and
+  the sideways nudge are a pure function of the slot and the head count.
+- Lane 0 is at +X, not -X. The camera looks toward +Z, and a camera facing that
+  way has world -X on its right, so the lane table runs positive to negative.
 - The player who **created** the room is the host, and announces that when
   introducing themselves. If the host leaves, every client promotes the lowest
   remaining id — a rule they all apply identically, so a room is never left

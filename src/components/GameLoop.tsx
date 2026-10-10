@@ -1,92 +1,70 @@
-import { useRef } from 'react'
+import { useEffect, useRef } from 'react'
 import { useFrame, useThree } from '@react-three/fiber'
 import * as THREE from 'three'
-import { GRAVITY, LANE_SHIFT_SPEED, LANE_X } from '../game/constants'
-import { checkCollision } from '../game/collision'
-import { endRun, game, speedForDistance, syncHud } from '../game/state'
-import { groundYFor, track } from '../game/track'
-import { room } from '../net/room'
+import { game } from '../game/state'
+import { advanceSimulation } from '../game/simulate'
 
-const MAX_DELTA = 1 / 30
-const HUD_INTERVAL = 0.08
+/** Front view: behind and above, far enough back to see the whole field. */
+const CAM_BACK = -11.5
+const CAM_HEIGHT = 5.2
+/** Rear view (hold B): in front of the player, looking back down the track. */
+const REAR_FORWARD = 8
+const REAR_HEIGHT = 4.6
+
+const vec = new THREE.Vector3()
+const look = new THREE.Vector3()
 
 /**
- * The single authority for per-frame simulation: movement, gravity, biome
- * tracking, collision, networking and the camera. Rendering components only
- * read state.
+ * Drives the simulation and owns the camera.
+ *
+ * The simulation itself lives in `simulate.ts` and is advanced from two
+ * places: this render loop, and a worker clock that keeps ticking while the
+ * page is hidden. Whichever fires first does the work, so a player who
+ * switches tabs keeps running instead of freezing on the spot.
  */
 export function GameLoop() {
   const camera = useThree((state) => state.camera)
-  const hudTimer = useRef(0)
+  const lookBack = useRef(0)
+
+  useEffect(() => {
+    const worker = new Worker(new URL('../game/clock.worker.ts', import.meta.url), {
+      type: 'module',
+    })
+    worker.onmessage = () => advanceSimulation()
+    worker.postMessage('start')
+    return () => {
+      worker.postMessage('stop')
+      worker.terminate()
+    }
+  }, [])
 
   useFrame((_, rawDelta) => {
-    const delta = Math.min(rawDelta, MAX_DELTA)
+    advanceSimulation()
 
-    if (game.phase === 'playing') {
-      const previousView = game.viewDistance
-
-      if (game.alive) {
-        // --- forward motion and gradual speed ramp
-        game.speed = speedForDistance(game.distance)
-        game.distance += game.speed * delta
-        game.viewDistance = game.distance
-        game.runTime += delta
-
-        // --- lane change
-        game.x = THREE.MathUtils.damp(game.x, LANE_X[game.lane], LANE_SHIFT_SPEED, delta)
-
-        // --- gravity
-        if (!game.onGround) {
-          game.velocityY += GRAVITY * delta
-          game.jumpY += game.velocityY * delta
-          if (game.jumpY <= 0) {
-            game.jumpY = 0
-            game.velocityY = 0
-            game.onGround = true
-          }
-        }
-      } else {
-        // --- spectating: drift the view toward whoever is still running
-        const leader = room.leaderDistance()
-        if (Number.isFinite(leader)) {
-          game.viewDistance = THREE.MathUtils.damp(game.viewDistance, leader, 2.5, delta)
-        }
-      }
-
-      // --- scroll the track by however far the view moved
-      track.update(game.viewDistance - previousView)
-
-      // --- biome under the camera drives ground height and the boat
-      const biome = track.biomeAtPlayer()
-      game.biome = biome
-      game.groundY = THREE.MathUtils.damp(game.groundY, groundYFor(biome), 7, delta)
-      game.boat = THREE.MathUtils.damp(game.boat, biome === 'river' ? 1 : 0, 5, delta)
-
-      // --- collision
-      if (game.alive && checkCollision(track.getSegments())) {
-        game.alive = false
-        if (game.multiplayer) {
-          // Distance is now frozen; the run continues as a spectator.
-          room.reportCrash(game.distance)
-        } else {
-          endRun()
-        }
-      }
-
-      hudTimer.current += delta
-      if (hudTimer.current >= HUD_INTERVAL) {
-        hudTimer.current = 0
-        syncHud()
-      }
-    }
-
-    // --- third person camera, always smoothly trailing the action
+    // Camera is pure presentation, so it runs on frames rather than steps.
+    const delta = Math.min(rawDelta, 1 / 30)
     const anchorX = game.alive ? game.x : 0
     const playerY = game.groundY + (game.alive ? game.jumpY : 0)
-    camera.position.x = THREE.MathUtils.damp(camera.position.x, anchorX * 0.55, 5, delta)
-    camera.position.y = THREE.MathUtils.damp(camera.position.y, playerY * 0.4 + 4.4, 4, delta)
-    camera.position.z = THREE.MathUtils.damp(camera.position.z, -8.8, 4, delta)
-    camera.lookAt(anchorX * 0.3, playerY + 1.4, 12)
+
+    lookBack.current = THREE.MathUtils.damp(lookBack.current, game.lookBack ? 1 : 0, 9, delta)
+    const t = lookBack.current
+
+    // Blend between trailing the player and looking back over their shoulder.
+    vec.set(
+      anchorX * 0.55,
+      playerY * 0.4 + THREE.MathUtils.lerp(CAM_HEIGHT, REAR_HEIGHT, t),
+      THREE.MathUtils.lerp(CAM_BACK, REAR_FORWARD, t),
+    )
+    look.set(
+      anchorX * 0.3,
+      playerY + THREE.MathUtils.lerp(1.4, 1.1, t),
+      THREE.MathUtils.lerp(12, -45, t),
+    )
+
+    camera.position.x = THREE.MathUtils.damp(camera.position.x, vec.x, 5, delta)
+    camera.position.y = THREE.MathUtils.damp(camera.position.y, vec.y, 4, delta)
+    camera.position.z = THREE.MathUtils.damp(camera.position.z, vec.z, 6, delta)
+    camera.lookAt(look)
   })
 
   return null

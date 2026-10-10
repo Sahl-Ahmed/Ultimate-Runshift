@@ -10,6 +10,11 @@ import { Runner, type RunnerPose } from './Runner'
 
 /** Remote players are only drawn while they are close enough to matter. */
 const VISIBLE_RANGE = 170
+/**
+ * Other runners are faded, so when several share a lane your own solid
+ * character still reads clearly through the crowd.
+ */
+const GHOST_OPACITY = 0.5
 
 export function Ghosts() {
   const snapshot = useSyncExternalStore(room.subscribe, room.getSnapshot)
@@ -64,7 +69,7 @@ function Ghost({ player }: { player: RoomPlayer }) {
 
   return (
     <group>
-      <Runner pose={pose} shirt={outfit.shirt} pants={outfit.pants} transparent />
+      <Runner pose={pose} shirt={outfit.shirt} pants={outfit.pants} opacity={GHOST_OPACITY} />
       {/* floating colour marker so you can spot who is who at a distance */}
       <mesh
         ref={(instance) => {

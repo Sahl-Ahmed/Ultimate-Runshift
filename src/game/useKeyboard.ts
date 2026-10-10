@@ -46,10 +46,28 @@ export function useKeyboard() {
         case 'r':
           if (game.phase !== 'playing' && soloControls) startRun()
           break
+        case 'b':
+          // Held, not toggled: the rear view lasts only while the key is down.
+          if (!typing) game.lookBack = true
+          break
       }
     }
 
+    const onKeyUp = (event: KeyboardEvent) => {
+      if (event.key.toLowerCase() === 'b') game.lookBack = false
+    }
+    // Releasing the key outside the window would otherwise stick the view.
+    const onBlur = () => {
+      game.lookBack = false
+    }
+
     window.addEventListener('keydown', onKeyDown)
-    return () => window.removeEventListener('keydown', onKeyDown)
+    window.addEventListener('keyup', onKeyUp)
+    window.addEventListener('blur', onBlur)
+    return () => {
+      window.removeEventListener('keydown', onKeyDown)
+      window.removeEventListener('keyup', onKeyUp)
+      window.removeEventListener('blur', onBlur)
+    }
   }, [])
 }

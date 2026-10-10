@@ -2,6 +2,7 @@ const ROWS: [string[], string][] = [
   [['A', '←'], 'Move one lane left'],
   [['D', '→'], 'Move one lane right'],
   [['Space'], 'Jump'],
+  [['B'], 'Hold to look behind'],
   [['R'], 'Restart after game over'],
 ]
 

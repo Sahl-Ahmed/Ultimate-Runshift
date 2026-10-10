@@ -26,12 +26,17 @@ interface Props {
   pose: RunnerPose
   shirt: string
   pants: string
-  /** Ghosts are drawn slightly see-through so they never hide an obstacle. */
-  transparent?: boolean
+  /**
+   * Below 1 the runner is drawn see-through. Other players are faded so that
+   * when several share a lane you can still pick yourself out, and so they
+   * never hide an obstacle.
+   */
+  opacity?: number
 }
 
 /** Blocky humanoid built from primitives only. Group origin sits at the feet. */
-export function Runner({ pose, shirt, pants, transparent = false }: Props) {
+export function Runner({ pose, shirt, pants, opacity = 1 }: Props) {
+  const transparent = opacity < 1
   const root = useRef<THREE.Group>(null)
   const body = useRef<THREE.Group>(null)
   const leftArm = useRef<THREE.Group>(null)
@@ -39,11 +44,11 @@ export function Runner({ pose, shirt, pants, transparent = false }: Props) {
   const leftLeg = useRef<THREE.Group>(null)
   const rightLeg = useRef<THREE.Group>(null)
 
-  const shirtMat = transparent ? ghostMat(shirt) : mat(shirt)
-  const pantsMat = transparent ? ghostMat(pants) : mat(pants)
-  const skinMat = transparent ? ghostMat(COLORS.skin) : mat(COLORS.skin)
-  const shoeMat = transparent ? ghostMat(COLORS.shoes) : mat(COLORS.shoes)
-  const hairMat = transparent ? ghostMat(COLORS.hair) : mat(COLORS.hair)
+  const shirtMat = transparent ? ghostMat(shirt, opacity) : mat(shirt)
+  const pantsMat = transparent ? ghostMat(pants, opacity) : mat(pants)
+  const skinMat = transparent ? ghostMat(COLORS.skin, opacity) : mat(COLORS.skin)
+  const shoeMat = transparent ? ghostMat(COLORS.shoes, opacity) : mat(COLORS.shoes)
+  const hairMat = transparent ? ghostMat(COLORS.hair, opacity) : mat(COLORS.hair)
 
   useFrame(() => {
     if (!root.current || !body.current) return
@@ -105,13 +110,15 @@ export function Runner({ pose, shirt, pants, transparent = false }: Props) {
   )
 }
 
-// Ghost materials are cached separately from the solid ones.
+// Ghost materials are cached separately from the solid ones, per colour and
+// opacity, so a crowded lane still only costs a handful of materials.
 const ghostCache = new Map<string, THREE.MeshLambertMaterial>()
-function ghostMat(color: string): THREE.MeshLambertMaterial {
-  let material = ghostCache.get(color)
+function ghostMat(color: string, opacity: number): THREE.MeshLambertMaterial {
+  const key = `${color}@${opacity.toFixed(2)}`
+  let material = ghostCache.get(key)
   if (!material) {
-    material = new THREE.MeshLambertMaterial({ color, transparent: true, opacity: 0.74 })
-    ghostCache.set(color, material)
+    material = new THREE.MeshLambertMaterial({ color, transparent: true, opacity, depthWrite: false })
+    ghostCache.set(key, material)
   }
   return material
 }
