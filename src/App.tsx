@@ -35,7 +35,7 @@ export default function App() {
         {solo && hud.phase === 'over' && <GameOverScreen score={hud.score} best={hud.best} />}
 
         {/* ---------------- room flow ---------------- */}
-        {net.status === 'connecting' && <ConnectingScreen />}
+        {net.status === 'connecting' && <ConnectingScreen waking={net.wakingServer} />}
         {net.status === 'error' && <RoomErrorScreen snapshot={net} />}
         {net.status === 'lobby' && <LobbyScreen snapshot={net} />}
         {net.status === 'countdown' && <Countdown endsAt={net.countdownEndsAt} />}

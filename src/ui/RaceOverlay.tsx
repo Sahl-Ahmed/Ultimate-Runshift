@@ -153,12 +153,16 @@ export function ResultsScreen({ snapshot, best }: { snapshot: RoomSnapshot; best
   )
 }
 
-export function ConnectingScreen() {
+export function ConnectingScreen({ waking }: { waking: boolean }) {
   return (
     <div className="overlay">
       <div className="card">
-        <h2 className="panel-title">Connecting…</h2>
-        <p className="tagline">Setting up the room</p>
+        <h2 className="panel-title">{waking ? 'Waking the server…' : 'Connecting…'}</h2>
+        <p className="error-detail" style={{ margin: '10px 0 0' }}>
+          {waking
+            ? 'The game server sleeps when nobody is playing. First connection of the day can take up to a minute - after that it is instant.'
+            : 'Setting up the room'}
+        </p>
       </div>
     </div>
   )

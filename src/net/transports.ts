@@ -7,6 +7,9 @@ const SUPABASE_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefine
 
 export const isOnlineConfigured = Boolean(SUPABASE_URL && SUPABASE_KEY)
 
+/** Free instances sleep when idle, and waking one takes most of a minute. */
+const RELAY_TIMEOUT_MS = 75_000
+
 /**
  * Same machine, different browser tabs. Costs nothing, needs no account and
  * is how the whole multiplayer flow can be tested locally.
@@ -65,4 +68,77 @@ export async function createOnlineTransport(roomCode: string, onMessage: Handler
       void client.removeAllChannels()
     },
   }
+}
+
+const WS_URL = import.meta.env.VITE_WS_URL as string | undefined
+
+/** Normalises http(s):// to ws(s):// so either form works in the env var. */
+function websocketUrl(base: string, roomCode: string): string {
+  const trimmed = base.trim().replace(/\/+$/, '')
+  const scheme = trimmed.replace(/^http:/, 'ws:').replace(/^https:/, 'wss:')
+  const withScheme = /^wss?:/.test(scheme) ? scheme : `wss://${scheme}`
+  return `${withScheme}/?room=${encodeURIComponent(roomCode)}`
+}
+
+export const isRelayConfigured = Boolean(WS_URL)
+
+/**
+ * The game's own relay server. Unlike Supabase this is billed by bandwidth
+ * rather than per message, so rooms cost almost nothing to run.
+ *
+ * The connect timeout is deliberately long: a free instance sleeps after a
+ * few idle minutes and takes most of a minute to wake up again.
+ */
+export function createRelayTransport(
+  roomCode: string,
+  onMessage: Handler,
+  onWaking?: () => void,
+): Promise<Transport> {
+  if (!WS_URL) throw new Error('No relay server is configured')
+
+  const socket = new WebSocket(websocketUrl(WS_URL, roomCode))
+
+  return new Promise<Transport>((resolve, reject) => {
+    // If it has not connected quickly the instance is almost certainly
+    // asleep, so tell the UI to explain the wait rather than look frozen.
+    const wakingTimer = setTimeout(() => onWaking?.(), 2500)
+    const failTimer = setTimeout(() => {
+      socket.close()
+      reject(new Error('The game server did not respond in time'))
+    }, RELAY_TIMEOUT_MS)
+
+    const settled = () => {
+      clearTimeout(wakingTimer)
+      clearTimeout(failTimer)
+    }
+
+    socket.onopen = () => {
+      settled()
+      socket.onmessage = (event) => {
+        try {
+          onMessage(JSON.parse(String(event.data)) as NetMessage)
+        } catch {
+          /* ignore anything that is not one of our messages */
+        }
+      }
+      resolve({
+        send(message) {
+          if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify(message))
+        },
+        close() {
+          socket.onclose = null
+          socket.close()
+        },
+      })
+    }
+
+    socket.onerror = () => {
+      settled()
+      reject(new Error('Could not reach the game server'))
+    }
+    socket.onclose = () => {
+      settled()
+      reject(new Error('The game server closed the connection'))
+    }
+  })
 }

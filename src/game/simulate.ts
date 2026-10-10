@@ -70,6 +70,10 @@ function stepGame(delta: number) {
     }
   }
 
+  // Broadcasting rides this clock too, so a hidden tab keeps reporting at
+  // the real rate instead of the once-a-second a page timer would manage.
+  room.networkTick(delta)
+
   hudTimer += delta
   if (hudTimer >= HUD_INTERVAL) {
     hudTimer = 0

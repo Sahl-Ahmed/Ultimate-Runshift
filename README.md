@@ -58,10 +58,31 @@ Joining tells you what went wrong, and lets you fix the code on the spot:
 | Room already has 5 players | **Room is full** |
 | Fewer than 4 characters typed | **Incomplete code** |
 
-### Online play setup (optional)
+### Option A: your own relay (recommended)
 
-Multiplayer runs over **Supabase Realtime Broadcast**. It needs **no database
-tables, no SQL and no auth** — a room exists only in memory inside a realtime
+The folder [`server/`](server) holds a ~100 line WebSocket relay: clients
+connect to `wss://<host>/?room=ABCDE` and anything one sends is forwarded to
+the others. It stores nothing - a room is a `Set` of sockets that disappears
+when the last player leaves - and it never parses the game's messages.
+
+Deploy it anywhere that runs Node. On Render's free tier:
+
+| Setting | Value |
+| --- | --- |
+| Root Directory | `server` |
+| Build Command | `npm install` |
+| Start Command | `npm start` |
+| Instance Type | Free |
+
+Then set `VITE_WS_URL=wss://your-server.onrender.com` and rebuild. Free
+instances sleep after 15 idle minutes and take up to a minute to wake, which
+the game shows as a "waking the server" screen; `GET /health` is there for an
+uptime pinger if you would rather it stayed up.
+
+### Option B: Supabase Realtime
+
+Supabase Realtime Broadcast works with **no database tables, no SQL and no
+auth** — a room exists only in memory inside a realtime
 channel, and there is nothing to clean up afterwards.
 
 1. Create a free project at <https://supabase.com>
@@ -81,20 +102,23 @@ tells you which mode is active.
 
 ### What it costs
 
-Each racing player broadcasts its position **5 times a second**, and the room
+Each racing player broadcasts its position **10 times a second**, and the room
 is quiet otherwise - during a race the position updates already prove a player
-is alive, so no separate heartbeat is sent. Supabase counts a broadcast once
-per recipient, so the cost grows with the square of the room size:
+is alive, so no separate heartbeat is sent. Solo play never touches the
+network at all.
 
-| Players | Messages per 3 min match | Matches per month on the free 2M |
+How much that costs depends entirely on **who is billing it**:
+
+| | Supabase free | Own relay on a free host |
 | --- | --- | --- |
-| Solo | 0 (never connects) | unlimited |
-| 2 | 2,040 | ~980 |
-| 4 | 12,240 | ~163 |
-| 6 | 30,600 | ~65 |
-| 10 | 91,800 | ~21 |
+| Billed by | messages, counted once per recipient | bandwidth |
+| Full room, 3 min match | 183,600 messages | ~15 MB |
+| Monthly allowance | 2,000,000 messages | ~100 GB |
+| **Full rooms per month** | **~10** | **~6,500** |
+| 4-player matches per month | ~80 | tens of thousands |
 
-Solo play never touches the network at all.
+That is why the relay exists. Its whole job is to move the cost from a
+per-message quota to bandwidth, which this game barely uses.
 
 ## Controls
 
@@ -164,8 +188,8 @@ src/
     useKeyboard.ts  key bindings
   net/
     types.ts        message shapes and tuning (max players, tick rates)
-    identity.ts     random names, room codes, the five outfits
-    transports.ts   Supabase Realtime (online) and BroadcastChannel (local)
+    transports.ts   own relay, Supabase, or browser tabs - picked by env
+    identity.ts     random names, room codes, per-slot outfits
     room.ts         roster, slots, host election, countdown, ranking
   components/
     GameCanvas.tsx  canvas, lights, fog
@@ -182,6 +206,8 @@ src/
   three/
     resources.ts    shared geometries, cached materials, palette
   ui/               menu, lobby, HUD, leaderboard, results, styles
+server/
+  index.js          the WebSocket relay (no database, nothing stored)
 ```
 
 ## How it works

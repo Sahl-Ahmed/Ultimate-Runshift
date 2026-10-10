@@ -5,12 +5,11 @@ export const MAX_PLAYERS = 10
 /**
  * How often a racing client broadcasts its position.
  *
- * Five a second, tested by eye against ten: other runners are purely cosmetic
- * (no player collision, and your score is your own distance) and the ghosts
- * are damped between updates, so the lower rate is not noticeable while the
- * saving is real.
+ * Ten a second. On the game's own relay the cost is bandwidth rather than a
+ * per-message quota, and a full room at this rate is only about 15 MB for a
+ * three minute match, so there is no reason to send less.
  */
-export const STATE_HZ = 5
+export const STATE_HZ = 10
 /**
  * Heartbeat interval. Only used when NOT racing - during a race the position
  * updates already prove a player is alive, so a separate beat is pure waste.

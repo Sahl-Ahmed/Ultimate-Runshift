@@ -1,0 +1,16 @@
+{
+  "name": "runshift-server",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Tiny WebSocket relay for ULTIMATE RUNSHIFT multiplayer rooms.",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  }
+}

@@ -3,7 +3,13 @@ import { randomSeed } from '../game/rng'
 import { endRun, game, preferredDifficulty, startRun } from '../game/state'
 import type { Difficulty } from '../game/types'
 import { normalizeRoomCode, randomId, randomName, randomRoomCode } from './identity'
-import { createLocalTransport, createOnlineTransport, isOnlineConfigured } from './transports'
+import {
+  createLocalTransport,
+  createOnlineTransport,
+  createRelayTransport,
+  isOnlineConfigured,
+  isRelayConfigured,
+} from './transports'
 import {
   BEAT_MS,
   LAST_RUNNER_MS,
@@ -63,6 +69,8 @@ export interface RoomSnapshot {
   errorDetail: string | null
   /** The code the last join attempt used, so the user can correct it. */
   attemptedCode: string
+  /** The relay is asleep and being woken, so the wait needs explaining. */
+  wakingServer: boolean
   countdownEndsAt: number
   /** Speed preset for this room, chosen by the host. */
   difficulty: Difficulty
@@ -91,6 +99,7 @@ class Room {
   private error: string | null = null
   private errorDetail: string | null = null
   private attemptedCode = ''
+  private wakingServer = false
   private countdownEndsAt = 0
   /** Track seed for the current round, chosen by the host. */
   private raceSeed = 0
@@ -105,8 +114,9 @@ class Room {
   private beatTimer: number | null = null
   private pruneTimer: number | null = null
   private emitTimer: number | null = null
-  private netTimer: number | null = null
   private countdownTimer: number | null = null
+  /** Seconds owed before the next position broadcast. */
+  private netAccumulator = 0
 
   private listeners = new Set<() => void>()
   private snapshot: RoomSnapshot = this.buildSnapshot()
@@ -135,6 +145,7 @@ class Room {
       error: this.error,
       errorDetail: this.errorDetail,
       attemptedCode: this.attemptedCode,
+      wakingServer: this.wakingServer,
       countdownEndsAt: this.countdownEndsAt,
       difficulty: this.difficulty,
       raceInProgress: Date.now() - this.lastRemoteRaceSignal < 3000,
@@ -229,20 +240,30 @@ class Room {
     // The host's own preference becomes the room's, until they change it.
     this.difficulty = asHost ? preferredDifficulty() : DEFAULT_DIFFICULTY
     this.code = code
-    this.kind = isOnlineConfigured ? 'online' : 'local'
+    // Own relay first: it is billed by bandwidth rather than per message, so
+    // it is the only one that makes full rooms cheap. Supabase stays as a
+    // configured alternative, and tabs on one machine as the offline option.
+    this.kind = isRelayConfigured || isOnlineConfigured ? 'online' : 'local'
     this.status = 'connecting'
     this.error = null
     this.errorDetail = null
     this.sawRaceInProgress = false
+    this.wakingServer = false
     this.emit()
 
     const handle = (message: NetMessage) => this.receive(message)
 
     try {
-      this.transport =
-        this.kind === 'online'
-          ? await createOnlineTransport(code, handle)
-          : createLocalTransport(code, handle)
+      if (isRelayConfigured) {
+        this.transport = await createRelayTransport(code, handle, () => {
+          this.wakingServer = true
+          this.emit()
+        })
+      } else if (isOnlineConfigured) {
+        this.transport = await createOnlineTransport(code, handle)
+      } else {
+        this.transport = createLocalTransport(code, handle)
+      }
     } catch (cause) {
       this.fail(
         'Connection failed',
@@ -288,6 +309,7 @@ class Room {
       return
     }
 
+    this.wakingServer = false
     // Final ordering once discovery is done, so all clients agree on slots.
     this.recomputeSlots()
     this.status = 'lobby'
@@ -321,6 +343,7 @@ class Room {
 
   private fail(message: string, detail: string | null = null) {
     this.teardown()
+    this.wakingServer = false
     this.status = 'error'
     this.error = message
     this.errorDetail = detail
@@ -343,10 +366,11 @@ class Room {
     this.code = ''
     this.countdownEndsAt = 0
     this.clearFinishCountdown()
-    for (const timer of [this.beatTimer, this.pruneTimer, this.emitTimer, this.netTimer, this.countdownTimer]) {
+    for (const timer of [this.beatTimer, this.pruneTimer, this.emitTimer, this.countdownTimer]) {
       if (timer !== null) clearInterval(timer)
     }
-    this.beatTimer = this.pruneTimer = this.emitTimer = this.netTimer = this.countdownTimer = null
+    this.beatTimer = this.pruneTimer = this.emitTimer = this.countdownTimer = null
+    this.netAccumulator = 0
   }
 
   private startTimers() {
@@ -361,13 +385,6 @@ class Room {
       if (this.status === 'idle' || this.status === 'error' || this.status === 'racing') return
       this.send({ t: 'beat', id: this.selfId })
     }, BEAT_MS)
-
-    // Position updates, for the same reason.
-    this.netTimer = window.setInterval(() => {
-      if (this.status === 'racing') {
-        this.publishState(game.distance, game.x, game.jumpY, game.alive)
-      }
-    }, Math.round(1000 / STATE_HZ))
 
     this.pruneTimer = window.setInterval(() => {
       const cutoff = Date.now() - TIMEOUT_MS
@@ -570,7 +587,26 @@ class Room {
     }, COUNTDOWN_MS) as unknown as number
   }
 
-  /** Sent 10x a second while racing. */
+  /**
+   * Called once per simulation step. Position updates ride the same
+   * worker-backed clock as the simulation rather than a timer of their own,
+   * because browsers throttle page timers to about once a second on a hidden
+   * tab - which would leave a backgrounded player running correctly but
+   * appearing to everyone else in one-second jumps.
+   */
+  networkTick(delta: number) {
+    if (this.status !== 'racing') {
+      this.netAccumulator = 0
+      return
+    }
+    const interval = 1 / STATE_HZ
+    this.netAccumulator += delta
+    if (this.netAccumulator < interval) return
+    // Never send a burst to catch up; one update is all that matters.
+    this.netAccumulator = Math.min(this.netAccumulator - interval, interval)
+    this.publishState(game.distance, game.x, game.jumpY, game.alive)
+  }
+
   private publishState(distance: number, x: number, jumpY: number, alive: boolean) {
     const self = this.self()
     if (self) {
@@ -581,7 +617,16 @@ class Room {
       self.lastSeen = Date.now()
       this.markDirty()
     }
-    this.send({ t: 's', id: this.selfId, d: distance, x, y: jumpY, a: alive ? 1 : 0 })
+    // Rounded before sending: full float precision would roughly double the
+    // size of the most frequent message for detail nobody can see.
+    this.send({
+      t: 's',
+      id: this.selfId,
+      d: Math.round(distance * 10) / 10,
+      x: Math.round(x * 100) / 100,
+      y: Math.round(jumpY * 100) / 100,
+      a: alive ? 1 : 0,
+    })
   }
 
   /** Called once when the local player crashes. Their distance is now locked. */
